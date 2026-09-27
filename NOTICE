@@ -1,0 +1,10 @@
+dsh-web-design
+Copyright 2026 zhang-guo-wen
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------
+
+This product is a plugin for DeepSeek Harness
+(https://github.com/deepseek-ai/deepseek-harness). It links against DeepSeek
+Harness packages as peer dependencies; no DeepSeek Harness source is included.
