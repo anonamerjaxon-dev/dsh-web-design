@@ -1,11 +1,19 @@
 {
   "name": "@guowenzhang/dsh-web-design",
   "description": "Web design for DeepSeek Harness: preview and edit HTML elements in the Sidebar",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhang-guo-wen/dsh-web-design.git"
+  },
+  "homepage": "https://github.com/zhang-guo-wen/dsh-web-design#readme",
+  "bugs": {
+    "url": "https://github.com/zhang-guo-wen/dsh-web-design/issues"
   },
   "main": "lib/index.mjs",
   "exports": {

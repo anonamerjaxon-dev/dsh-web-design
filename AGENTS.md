@@ -5,7 +5,7 @@
 
 ## 目录
 
-仓库根**就是**包：`package.json` 即 `@guowenzhang/dsh-web-design`（版本 `1.0.0`）。
+仓库根**就是**包：`package.json` 即 `@guowenzhang/dsh-web-design`（版本 `1.0.1`）。
 这不是风格选择——`dsh plugin add <git-url>` 取的是仓库根，包放在 `packages/*` 下会被装成错误的东西。
 
 - `src/index.ts` —— host 入口：`name` / `inject: []` / `apply`，只注册下面这一个 Remote。
@@ -118,7 +118,7 @@ npx @deepseek-ai/dsh --profile web --dump-config | Select-String web-design
 
 `lib/` 是提交进仓库的，所以**发版 = 改版本号 + 构建 + 提交产物 + 打 tag**。别人按 tag 安装，`master` 上的临时提交不会被他们拿到。
 
-1. 改根 `package.json` 的 `version`（当前 `1.0.0`，已有 tag `v1.0.0`）。
+1. 改根 `package.json` 的 `version`（当前 `1.0.1`，已有 tag `v1.0.0`）。
 2. `npm run build`，确认 `lib/index.mjs` 与 `lib/client.js` 是最新的。
 3. 提交源码与 `lib/`。
 4. 打带注释的 tag 并推送：
