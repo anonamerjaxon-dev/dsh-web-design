@@ -38,15 +38,27 @@ The toolbar's two-position switch changes between **Preview** and **Edit** witho
 
 ### Edit element
 
-Select **Edit**, single-click the exact element to highlight it, then double-click to open the dialog. For transparent controls covering label text, clicking the text selects the text leaf while clicking the surrounding option selects its box. The dialog's **Parent** action moves to the containing element, including a group whose border is too thin to target directly. The dialog opens beside the preview when space allows, or along the bottom of a narrow viewport. A draft immediately shows **Unsaved** in the toolbar; **Cancel** discards it.
+Select **Edit**, single-click the exact element to highlight it, then double-click to open the dialog. For transparent controls covering label text, clicking the text selects the text leaf while clicking the surrounding option selects its box. The dialog's **Parent** action moves to the containing element, including a group whose border is too thin to target directly. The dialog opens beside the preview when space allows, or along the bottom of a narrow viewport. An unsaved change shows **Unsaved** in the toolbar. **Cancel** closes the dialog and keeps whatever was already committed; it never undoes an edit the page is already showing.
 
-### Move element
+### Move and resize
 
-Drag the handle on the selected outline. Block elements move with CSS `translate`; inline text elements use relative `left`/`top` offsets, because browsers do not translate ordinary inline boxes. **Save** in the dialog keeps the new position; **Cancel** restores the original inline declarations.
+Drag the handle on the selected outline, or any of the eight resize handles on its edges and corners. Block elements move with CSS `translate`; inline text elements use relative `left`/`top` offsets, because browsers do not translate ordinary inline boxes.
+
+A finished drag or resize is an edit the moment you let go of the pointer: the toolbar shows **Unsaved** and the review is updated right away. There is no separate per-element save step, and closing the dialog keeps the change. The resize handles stay on the opposite edge, so a box grows from one side while the far side holds still.
+
+Some elements cannot be moved or resized — a `!important` position, a `translate` the frame cannot read, or an inline box. The frame says so instead of letting the element snap back, and the dialog repeats the reason.
 
 ### Edit style
 
-The dialog changes font size, weight, line height, letter spacing, color, background, padding, margin, and corner radius. A saved override applies to the frame immediately and persists with the review.
+The dialog changes font size, weight, line height, letter spacing, color, background, width, height, padding, margin, and corner radius.
+
+Each field is built for the property it edits:
+
+- **Colours** get a colour swatch and a hex box. The swatch is what most people reach for; the hex box accepts `#1a73e8`, and the page's own colour shows as a hint when nothing has been typed. Nothing needs to be written as `rgb(...)`.
+- **Lengths** are a number and a unit dropdown, so letter spacing is `2` + `px` rather than the string `2px`. Each field only offers the units that make sense for it — `normal` for letter spacing, `%` for width, `rem` for font size.
+- **Enums** such as font weight are a list of the real values, with **Default** first when the page has not set the property.
+
+The dialog also names what kind of element you picked — an interactive element such as a button, or a content block such as a heading — and shows its size.
 
 ### Text edit
 
@@ -54,7 +66,13 @@ An element with exactly one non-blank direct text node exposes that text in a fi
 
 ### Delete element
 
-**Delete element** removes the selected element and its descendants from the preview. The toolbar shows **Unsaved** until **Save to file** removes that exact element from the HTML source. **Undo deletion** restores all pending deletions before they reach the file. Document roots (`html`, `head`, and `body`) cannot be deleted.
+**Delete element** removes the selected element and its descendants from the preview. The toolbar shows **Unsaved** until **Save to file** removes that exact element from the HTML source. Document roots (`html`, `head`, and `body`) cannot be deleted.
+
+### Undo
+
+Every edit made in a session — style changes, text replacements, deletions, drags and resizes — can be stepped back through with **Undo** and **Redo** in the toolbar, or with <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> and <kbd>Shift</kbd>+<kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> while the preview has focus. The previewed page keeps its own undo inside its own text fields.
+
+The history covers the review only: it spans what you have done in this session and stops once **Save to file** writes them into the HTML, because from that point the file is the record and the button has nothing left to step back across.
 
 ### Save to file
 

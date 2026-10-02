@@ -24,6 +24,8 @@ export type FrameToParent =
   | { readonly channel: typeof CHANNEL; readonly kind: 'select'; readonly anchor: FrameAnchor }
   | { readonly channel: typeof CHANNEL; readonly kind: 'edit'; readonly anchor: FrameAnchor }
   | { readonly channel: typeof CHANNEL; readonly kind: 'move'; readonly selector: string; readonly declarations: Readonly<Record<string, string>>; readonly restore: Readonly<Record<string, string>>; readonly anchor: FrameAnchor }
+  | { readonly channel: typeof CHANNEL; readonly kind: 'history'; readonly action: 'undo' | 'redo' }
+  | { readonly channel: typeof CHANNEL; readonly kind: 'unavailable'; readonly selector: string; readonly reason: 'move' | 'resize' }
   | { readonly channel: typeof CHANNEL; readonly kind: 'removeResult'; readonly requestId: string; readonly selector: string; readonly success: boolean; readonly removedSelectors: readonly string[] }
   | { readonly channel: typeof CHANNEL; readonly kind: 'resize'; readonly height: number }
 
@@ -51,6 +53,12 @@ export interface FrameAnchor {
   readonly rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
   /** Computed values the editor shows as the element's current style. */
   readonly computed: Readonly<Record<string, string>>
+  /** Computed display mode, so the editor can name the kind of box. */
+  readonly display?: string
+  /** Whether width/height would change this element's box. */
+  readonly resizable?: boolean
+  /** Whether a drag gesture can start on this element. */
+  readonly movable?: boolean
 }
 
 /** A message the parent sends to the frame. */
@@ -238,7 +246,32 @@ function runtime(channel: string): void {
         height: rect.height,
       },
       computed: style,
+      // What kind of box this is, and whether the handles can move it at all.
+      // A silent no-op handle is worse than no handle.
+      display: computed?.getPropertyValue('display').trim() ?? '',
+      resizable: resizable(element),
+      movable: movable(element),
     }
+  }
+
+  /** Why a drag gesture could not start, for the reviewer instead of silence. */
+  const movable = (element: Element): boolean => {
+    if (!(element instanceof HTMLElement || element instanceof SVGElement)) return false
+    for (const property of ['position', 'left', 'top', 'translate']) {
+      if (element.style.getPropertyPriority(property) === 'important') return false
+    }
+    const computed = doc.defaultView?.getComputedStyle(element)
+    if (computed?.display === 'inline') {
+      const position = computed.getPropertyValue('position').trim() || 'static'
+      if (position !== 'static' && position !== 'relative') return false
+      const x = positionBase(computed.getPropertyValue('left'), computed.getPropertyValue('right'))
+      const y = positionBase(computed.getPropertyValue('top'), computed.getPropertyValue('bottom'))
+      if (x === null || y === null) return false
+      return true
+    }
+    const original = element.style.getPropertyValue('translate')
+    if (original !== '' && translateParts(original.trim()) === null) return false
+    return translateParts(computed?.getPropertyValue('translate').trim() || original) !== null
   }
 
   /** Short text excerpt for the selected-element display. */
@@ -353,7 +386,19 @@ function runtime(channel: string): void {
   const beginResize = (event: PointerEvent, name: string): void => {
     if (mode !== 'inspect' || drag !== null || resize !== null) return
     const element = selected
-    if (element === null || !element.isConnected || !resizable(element)) return
+    if (element === null || !element.isConnected) return
+    if (!resizable(element)) {
+      event.preventDefault()
+      event.stopPropagation()
+      post({ kind: 'unavailable', selector: selectedSelector ?? selectorFor(element), reason: 'resize' })
+      return
+    }
+    if (!movable(element)) {
+      event.preventDefault()
+      event.stopPropagation()
+      post({ kind: 'unavailable', selector: selectedSelector ?? selectorFor(element), reason: 'move' })
+      return
+    }
     const computed = doc.defaultView?.getComputedStyle(element)
     const restore: Record<string, string> = {}
     const priorities: Record<string, string> = {}
@@ -467,6 +512,14 @@ function runtime(channel: string): void {
     handle.addEventListener('pointerdown', event => {
       if (mode !== 'inspect' || drag !== null || resize !== null || selected === null || !selected.isConnected || !(selected instanceof HTMLElement || selected instanceof SVGElement)) return
       const element = selected
+      // A gesture that cannot work is reported instead of silently snapping the
+      // element back where it was, which reads as the handle being broken.
+      if (!movable(element)) {
+        event.preventDefault()
+        event.stopPropagation()
+        post({ kind: 'unavailable', selector: selectedSelector ?? selectorFor(element), reason: 'move' })
+        return
+      }
       const computed = doc.defaultView?.getComputedStyle(element)
       const strategy = element instanceof HTMLElement && computed?.display === 'inline' ? 'inline' : 'translate'
       const properties = strategy === 'inline' ? ['position', 'left', 'top'] : ['translate']
@@ -543,7 +596,13 @@ function runtime(channel: string): void {
     const rect = element.getBoundingClientRect()
     const view = doc.defaultView
     node.style.display = 'block'
-    if (node === box && handle !== null) handle.style.top = rect.top < 34 ? rect.height + 6 + 'px' : '-32px'
+    if (node === box && handle !== null) {
+      // A handle that sits under the fixed page header cannot be grabbed, and a
+      // handle on an element that cannot move does nothing at all. Show only
+      // the handles that will actually work.
+      handle.style.display = mode === 'inspect' && movable(element) ? 'grid' : 'none'
+      handle.style.top = rect.top < 34 ? rect.height + 6 + 'px' : '-32px'
+    }
     if (node === box && resizeHandles !== null) {
       resizeHandles.style.display = mode === 'inspect' && resizable(element) ? 'block' : 'none'
     }
@@ -826,6 +885,20 @@ function runtime(channel: string): void {
         return
     }
   })
+
+  // Forward the review history shortcut. The previewed page owns its own
+  // editing keys, so only hand over Cmd/Ctrl+Z while no field of the page has
+  // focus; the Host decides what to step back.
+  doc.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (mode !== 'inspect' || !(event.metaKey || event.ctrlKey) || event.altKey) return
+    if (event.key !== 'z' && event.key !== 'Z') return
+    const target = event.target
+    if (target instanceof HTMLElement && (target.isContentEditable
+      || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return
+    event.preventDefault()
+    event.stopPropagation()
+    post({ kind: 'history', action: event.shiftKey ? 'redo' : 'undo' })
+  }, true)
 
   post({ kind: 'ready' })
 }

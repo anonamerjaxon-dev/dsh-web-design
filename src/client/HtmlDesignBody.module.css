@@ -264,6 +264,25 @@
   overflow-wrap: anywhere;
 }
 
+.tagCode {
+  padding: 1px 5px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.metaNote {
+  margin-left: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.warn {
+  margin: 0;
+  color: var(--dsw-alias-label-warning, #b4690e);
+  font-size: 12px;
+}
+
 .hint {
   margin: 0;
   color: var(--dsw-alias-label-tertiary);
@@ -286,6 +305,57 @@
 .fieldLabel {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
+}
+
+.lengthField {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.colorField {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.colorSwatch {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+.lengthInput,
+.unitSelect,
+.select {
+  box-sizing: border-box;
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.lengthInput {
+  width: 100%;
+  min-width: 0;
+}
+
+.unitSelect {
+  flex: 0 0 auto;
+}
+
+.select {
+  width: 100%;
 }
 
 .textInput {

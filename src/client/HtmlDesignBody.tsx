@@ -68,23 +68,88 @@ export type HtmlDesignBodyProps =
 
 const MODES: readonly DesignMode[] = ['browse', 'inspect']
 
-/** Editable style properties, with the locale key naming each one. */
+/** How a style value is edited, so the dialog never asks for raw CSS. */
+type StyleControl =
+  /** A CSS color: a visual swatch plus a plain hex field. */
+  | { readonly kind: 'color' }
+  /** A number and a unit, the two things a length value actually is. */
+  | { readonly kind: 'length'; readonly units: readonly string[]; readonly bare?: boolean }
+  /** A closed set of named values. */
+  | { readonly kind: 'choice'; readonly options: readonly string[] }
+
+/** Editable style properties, with the control that should edit each one. */
 const STYLE_FIELDS: readonly {
   readonly key: string
   readonly label: 'width' | 'height' | 'fontSize' | 'fontWeight' | 'lineHeight' | 'letterSpacing' | 'color' | 'background' | 'padding' | 'margin' | 'borderRadius'
+  readonly control: StyleControl
 }[] = [
-  { key: 'width', label: 'width' },
-  { key: 'height', label: 'height' },
-  { key: 'font-size', label: 'fontSize' },
-  { key: 'font-weight', label: 'fontWeight' },
-  { key: 'line-height', label: 'lineHeight' },
-  { key: 'letter-spacing', label: 'letterSpacing' },
-  { key: 'color', label: 'color' },
-  { key: 'background-color', label: 'background' },
-  { key: 'padding', label: 'padding' },
-  { key: 'margin', label: 'margin' },
-  { key: 'border-radius', label: 'borderRadius' },
+  { key: 'width', label: 'width', control: { kind: 'length', units: ['px', '%', 'em', 'rem', 'ch', 'auto'], bare: true } },
+  { key: 'height', label: 'height', control: { kind: 'length', units: ['px', '%', 'em', 'rem', 'ch', 'auto'], bare: true } },
+  { key: 'font-size', label: 'fontSize', control: { kind: 'length', units: ['px', 'rem', 'em', '%', 'pt'] } },
+  // line-height accepts a bare multiplier, which is why it is not a length.
+  { key: 'line-height', label: 'lineHeight', control: { kind: 'length', units: ['', 'px', 'rem', 'em', '%'], bare: true } },
+  { key: 'letter-spacing', label: 'letterSpacing', control: { kind: 'length', units: ['px', 'em', 'rem', 'normal'], bare: true } },
+  { key: 'font-weight', label: 'fontWeight', control: { kind: 'choice', options: ['300', '400', '500', '600', '700', '800', '900'] } },
+  { key: 'color', label: 'color', control: { kind: 'color' } },
+  { key: 'background-color', label: 'background', control: { kind: 'color' } },
+  { key: 'border-radius', label: 'borderRadius', control: { kind: 'length', units: ['px', '%', 'em', 'rem'] } },
+  { key: 'padding', label: 'padding', control: { kind: 'length', units: ['px', '%', 'em', 'rem'] } },
+  { key: 'margin', label: 'margin', control: { kind: 'length', units: ['px', '%', 'em', 'rem', 'auto'], bare: true } },
 ]
+
+/** Tags a person can act on, as opposed to structural or content blocks. */
+const INTERACTIVE_TAGS = /^(?:a|button|input|select|textarea|summary|option|label)$/iu
+
+/** Whether the selected element is interactive rather than a content block. */
+function interactiveTag(tag: string): boolean {
+  return INTERACTIVE_TAGS.test(tag)
+}
+
+/** Split a CSS value into the number a box should show and the unit beside it. */
+function splitLength(value: string, units: readonly string[], bare: boolean): { readonly amount: string; readonly unit: string } {
+  const trimmed = value.trim()
+  if (trimmed === '') return { amount: '', unit: units[0] ?? 'px' }
+  if (units.includes(trimmed)) return { amount: '', unit: trimmed }
+  const match = /^([+-]?(?:\d+\.?\d*|\.\d+))\s*(.*)$/.exec(trimmed)
+  if (match === null) return { amount: trimmed, unit: units[0] ?? 'px' }
+  const unit = match[2] ?? ''
+  // Keep any unit the author wrote even if it is not offered, rather than
+  // silently rewriting what they typed.
+  if (unit !== '' && !units.includes(unit)) return { amount: trimmed, unit: units[0] ?? 'px' }
+  if (unit === '' && !bare) return { amount: trimmed, unit: units[0] ?? 'px' }
+  return { amount: match[1] ?? '', unit: unit === '' ? units[0] ?? 'px' : unit }
+}
+
+/** Join a number and a unit back into one CSS value. */
+function joinLength(amount: string, unit: string): string {
+  if (amount.trim() === '') return ''
+  return unit === '' ? amount.trim() : `${amount.trim()}${unit}`
+}
+
+/** Reduce any CSS color the browser reports to a hex swatch value. */
+function toHexColor(value: string): string {
+  const trimmed = value.trim()
+  if (/^#[0-9a-f]{6}$/iu.test(trimmed)) return trimmed.toLowerCase()
+  if (/^#[0-9a-f]{3}$/iu.test(trimmed)) {
+    return '#' + trimmed.slice(1).split('').map(digit => digit + digit).join('')
+  }
+  const channel = (part: string): number => {
+    const number = part.trim()
+    if (number.endsWith('%')) return Math.round(Number.parseFloat(number) * 2.55)
+    return Math.max(0, Math.min(255, Math.round(Number.parseFloat(number) || 0)))
+  }
+  const rgb = /^rgba?\(([^)]*)\)$/iu.exec(trimmed)
+  if (rgb !== null) {
+    const [red, green, blue] = rgb[1]?.split(/[,/\s]+/u).filter(Boolean) ?? []
+    const hex = [channel(red ?? '0'), channel(green ?? '0'), channel(blue ?? '0')]
+      .map(part => part.toString(16).padStart(2, '0'))
+      .join('')
+    return '#' + hex
+  }
+  // Named and other colors (oklch, color-mix, …) have no cheap conversion.
+  // #000 is a neutral placeholder that leaves the author’s text intact.
+  return '#000000'
+}
 
 /** Placement of the editor in the visible application viewport. */
 interface EditorPlacement {
@@ -109,6 +174,16 @@ interface SelectedSource {
   readonly text: string
   readonly classes: readonly string[]
 }
+
+/** Everything an edit can change, captured so one undo step can put it back. */
+interface DesignSnapshot {
+  readonly document: DesignAnnotationDocument | null
+  readonly textEdits: Readonly<Record<string, string>>
+  readonly deletions: readonly PendingDeletion[]
+}
+
+/** How many undo steps to keep. Deeper than any sensible editing session. */
+const HISTORY_LIMIT = 100
 
 /** Keep an editing surface beside the Sidebar when space allows. */
 function placeEditor(stage: HTMLElement): EditorPlacement {
@@ -165,6 +240,10 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
   const [draftText, setDraftText] = useState('')
   const [editableText, setEditableText] = useState<string | null>(null)
   const [selectedParentSelector, setSelectedParentSelector] = useState<string | null>(null)
+  // What kind of box the selected element is, and whether the handles can act
+  // on it. Kept beside the selection because the stored anchor is only about
+  // locating the element for comments.
+  const [traits, setTraits] = useState<{ readonly display: string; readonly resizable: boolean; readonly movable: boolean } | null>(null)
   const [locatorCopy, setLocatorCopy] = useState<{ readonly selector: string; readonly success: boolean } | null>(null)
   const selectedSource = useRef<SelectedSource | null>(null)
   const deletionRequest = useRef<{ readonly requestId: string; readonly source: SelectedSource } | null>(null)
@@ -172,10 +251,13 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
   const [deleting, setDeleting] = useState(false)
   const [deletions, setDeletions] = useState<readonly PendingDeletion[]>([])
   const deletionsRef = useRef<readonly PendingDeletion[]>([])
-  const pendingMove = useRef<{ readonly selector: string; readonly restore: Readonly<Record<string, string>> } | null>(null)
   // Text edits are held here rather than in the review store: they are a
   // source rewrite awaiting the explicit save, not review state to persist.
   const [textEdits, setTextEdits] = useState<Record<string, string>>({})
+  // Undo/redo snapshots of everything not yet written to the file. A snapshot is
+  // pushed before an edit changes it, so stepping back restores the prior state
+  // without replaying anything.
+  const [history, setHistory] = useState<{ readonly past: readonly DesignSnapshot[]; readonly future: readonly DesignSnapshot[] }>({ past: [], future: [] })
   const [pendingEdits, setPendingEdits] = useState(false)
   const editRevision = useRef(0)
   const [fileWrite, setFileWrite] = useState<{ readonly kind: 'idle' | 'saving' | 'saved' | 'partial' | 'failed'; readonly detail: string }>({ kind: 'idle', detail: '' })
@@ -205,24 +287,20 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
     return () => { URL.revokeObjectURL(url) }
   }, [source])
 
-  /** Restore a dragged element when its dialog is discarded. */
-  const discardMove = useCallback(() => {
-    const move = pendingMove.current
-    if (move === null) return
-    postToFrame(frameRef.current, { kind: 'style', selector: move.selector, declarations: move.restore })
-    pendingMove.current = null
-  }, [])
-
   /** Adopt a frame selection; only an explicit edit gesture opens the dialog. */
   const selectAnchor = useCallback((anchor: FrameAnchor, openEditor: boolean) => {
     selectedSource.current = { selector: anchor.selector, text: anchor.sourceText, classes: anchor.sourceClasses }
     setSelectedParentSelector(anchor.parentSelector)
+    setTraits({
+      display: anchor.display ?? '',
+      resizable: anchor.resizable === true,
+      movable: anchor.movable !== false,
+    })
     const sameSelection = state.selectedSelector === anchor.selector
     if (state.open && sameSelection) {
       actions.select(toAnchor(anchor))
       return
     }
-    discardMove()
     actions.select(toAnchor(anchor))
     if (!openEditor || state.mode !== 'inspect') {
       if (state.open) actions.setOpen(false)
@@ -234,7 +312,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
     setEditableText(anchor.editableText)
     setDraftText(anchor.editableText === null ? '' : textEdits[anchor.selector] ?? anchor.editableText)
     actions.setOpen(true)
-  }, [actions, discardMove, state.mode, state.document, state.open, state.selectedSelector, textEdits])
+  }, [actions, state.mode, state.document, state.open, state.selectedSelector, textEdits])
 
   const closeEditor = useCallback(() => {
     actions.setOpen(false)
@@ -246,9 +324,8 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
   }, [actions])
 
   const cancelEditor = useCallback(() => {
-    discardMove()
     closeEditor()
-  }, [closeEditor, discardMove])
+  }, [closeEditor])
 
   useLayoutEffect(() => {
     const stage = stageRef.current
@@ -308,7 +385,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
     setDeleting(false)
     setPendingEdits(false)
     editRevision.current = 0
-    pendingMove.current = null
+    clearHistory()
     setFileWrite({ kind: 'idle', detail: '' })
     actions.load(null)
     actions.select(null)
@@ -344,6 +421,125 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
       postToFrame(frameRef.current, { kind: 'style', selector: edit.selector, declarations: edit.declarations })
     }
   }, [state.document, state.reloadToken])
+
+  /** Write the current review to the Host. */
+  const persist = useCallback(async (next: DesignAnnotationDocument) => {
+    if (fileRef === undefined || hostPath === undefined) return
+    const canonical = { ...next, file: hostPath }
+    actions.beginSave()
+    try {
+      await saveReview(fileRef, canonical)
+      actions.endSave(canonical)
+    } catch (error) {
+      actions.failSave(error instanceof Error ? error.message : String(error))
+    }
+  }, [fileRef, hostPath, saveReview, actions])
+
+  /** The document with one edit applied, replacing any prior edit for the selector. */
+  const withEdit = useCallback((edit: ElementEdit, path: string): DesignAnnotationDocument => {
+    const base = state.document ?? {
+      version: 1 as const, file: path, comments: [], edits: [], updatedAt: edit.updatedAt,
+    }
+    return {
+      ...base,
+      edits: [...base.edits.filter(existing => existing.selector !== edit.selector), edit],
+      updatedAt: edit.updatedAt,
+    }
+  }, [state.document])
+
+  const snapshot = useCallback((): DesignSnapshot => ({
+    document: documentRef.current,
+    textEdits,
+    deletions: deletionsRef.current,
+  }), [textEdits])
+
+  /** Record the state an edit is about to change, so one undo step reverses it. */
+  const pushHistory = useCallback(() => {
+    const entry = snapshot()
+    setHistory(current => current.past.at(-1) === entry ? current : { past: [...current.past, entry].slice(-HISTORY_LIMIT), future: [] })
+  }, [snapshot])
+
+  const clearHistory = useCallback(() => {
+    setHistory({ past: [], future: [] })
+  }, [])
+
+  /** Put a snapshot back into the store and the frame, without a file write. */
+  const restoreSnapshot = useCallback((entry: DesignSnapshot) => {
+    deletionsRef.current = entry.deletions
+    setDeletions(entry.deletions)
+    setTextEdits(entry.textEdits)
+    actions.restore(entry.document)
+    // A frame reload is the only way to un-apply a property the frame no longer
+    // knows about, so replay the whole review onto the fresh document.
+    actions.requestReload()
+  }, [actions])
+
+  const undo = useCallback(() => {
+    setHistory(current => {
+      const previous = current.past.at(-1)
+      if (previous === undefined) return current
+      // Capture what is on screen before restoring: the store update lands on
+      // the next render, so snapshot() would otherwise read the restored state.
+      const now = snapshot()
+      restoreSnapshot(previous)
+      return { past: current.past.slice(0, -1), future: [now, ...current.future].slice(0, HISTORY_LIMIT) }
+    })
+  }, [restoreSnapshot, snapshot])
+
+  const redo = useCallback(() => {
+    setHistory(current => {
+      const next = current.future[0]
+      if (next === undefined) return current
+      const now = snapshot()
+      restoreSnapshot(next)
+      return { past: [...current.past, now].slice(-HISTORY_LIMIT), future: current.future.slice(1) }
+    })
+  }, [restoreSnapshot, snapshot])
+
+  /**
+   * Commit a finished drag or resize. The element already carries the new
+   * values in the frame, so only the review document, the sidecar and the
+   * history need updating.
+   */
+  const applyDragEdit = useCallback((selector: string, declarations: Record<string, string>) => {
+    if (hostPath === undefined) return
+    const previous = state.document?.edits.find(edit => edit.selector === selector)?.declarations ?? {}
+    // A drag reports the properties it touched, not a whole style block, so
+    // merge them over whatever the element already had and keep the rest.
+    const merged = cleanDeclarations({ ...previous, ...declarations })
+    if (sameDeclarations(previous, merged)) return
+    pushHistory()
+    if (Object.keys(merged).length > 0) {
+      const edit: ElementEdit = { selector, declarations: merged, updatedAt: new Date().toISOString() }
+      actions.upsertEdit(edit)
+      void persist(withEdit(edit, hostPath))
+    } else {
+      actions.removeEdit(selector)
+      void persist(withoutEdit(state.document, selector, hostPath))
+    }
+    editRevision.current += 1
+    setPendingEdits(true)
+    setFileWrite({ kind: 'idle', detail: '' })
+    if (state.open && state.selectedSelector === selector) setDraftStyle(merged)
+  }, [actions, hostPath, persist, pushHistory, state.document, state.open, state.selectedSelector, withEdit])
+
+  // Cmd/Ctrl+Z anywhere in the preview steps the review history. The key is
+  // handled here rather than in the frame so one stack covers every edit kind.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || !(event.metaKey || event.ctrlKey) || event.altKey) return
+      if (event.key !== 'z' && event.key !== 'Z') return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable
+        || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.shiftKey) redo()
+      else undo()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => { window.removeEventListener('keydown', onKeyDown, true) }
+  }, [redo, undo])
 
   // Receive hover, selection, and drag completion from the frame runtime.
   useEffect(() => {
@@ -387,19 +583,24 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
           if (message.anchor !== undefined) selectAnchor(message.anchor, true)
           return
         case 'move':
-          if (message.anchor === undefined || message.declarations === undefined || message.restore === undefined || message.selector === undefined) return
+          if (message.anchor === undefined || message.declarations === undefined || message.selector === undefined) return
           if (state.selectedSelector !== message.selector) return
-          // A drag or resize can start from a plain selection whose dialog was
-          // never opened; open it here so the pending declarations become a
-          // reviewable draft instead of silently vanishing on the next action.
-          if (!state.open) selectAnchor(message.anchor, true)
-          if (pendingMove.current === null) {
-            pendingMove.current = { selector: message.selector, restore: message.restore }
+          // A finished drag or resize is a finished edit: commit it straight to
+          // the review document and the sidecar. There is no per-element save
+          // step, and no reason to open the dialog the user never asked for.
+          if (state.open && state.selectedSelector === message.selector) {
+            actions.select(toAnchor(message.anchor))
+            setComputed(message.anchor.computed)
           }
-          actions.select(toAnchor(message.anchor))
-          setComputed(message.anchor.computed)
-          setDraftStyle(current => ({ ...current, ...message.declarations }))
-          setFileWrite({ kind: 'idle', detail: '' })
+          applyDragEdit(message.selector, message.declarations)
+          return
+        case 'history':
+          if (message.action === 'redo') redo()
+          else undo()
+          return
+        case 'unavailable':
+          // A handle that did nothing is a question the reviewer needs answered.
+          setFileWrite({ kind: 'failed', detail: `${t('handleUnavailable')}: ${t(message.reason === 'resize' ? 'resizeHandle' : 'dragHandle')}` })
           return
         case 'removeResult': {
           if (typeof message.requestId !== 'string' || typeof message.selector !== 'string') return
@@ -415,10 +616,10 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
               return
             }
             const deletion: PendingDeletion = { ...request.source, removedSelectors }
+            pushHistory()
             const next = [...deletionsRef.current.filter(current => !removedSelectors.includes(current.selector)), deletion]
             deletionsRef.current = next
             setDeletions(next)
-            pendingMove.current = null
             editRevision.current += 1
             setFileWrite({ kind: 'idle', detail: '' })
             actions.select(null)
@@ -436,32 +637,9 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
     }
     window.addEventListener('message', listener)
     return () => { window.removeEventListener('message', listener) }
-  }, [actions, closeEditor, selectAnchor, source, state.mode, state.document, state.reloadToken, state.selectedSelector, state.open, textEdits, t])
+  }, [actions, applyDragEdit, closeEditor, pushHistory, redo, selectAnchor, source, state.mode, state.document, state.reloadToken, state.selectedSelector, state.open, textEdits, t, undo])
 
-  /** Write the current review to the Host. */
-  const persist = useCallback(async (next: DesignAnnotationDocument) => {
-    if (fileRef === undefined || hostPath === undefined) return
-    const canonical = { ...next, file: hostPath }
-    actions.beginSave()
-    try {
-      await saveReview(fileRef, canonical)
-      actions.endSave(canonical)
-    } catch (error) {
-      actions.failSave(error instanceof Error ? error.message : String(error))
-    }
-  }, [fileRef, hostPath, saveReview, actions])
 
-  /** The document with one edit applied, replacing any prior edit for the selector. */
-  const withEdit = useCallback((edit: ElementEdit, path: string): DesignAnnotationDocument => {
-    const base = state.document ?? {
-      version: 1 as const, file: path, comments: [], edits: [], updatedAt: edit.updatedAt,
-    }
-    return {
-      ...base,
-      edits: [...base.edits.filter(existing => existing.selector !== edit.selector), edit],
-      updatedAt: edit.updatedAt,
-    }
-  }, [state.document])
 
   const saveSelection = useCallback(() => {
     const selector = state.selectedSelector
@@ -491,13 +669,13 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
       setTextEdits(current => ({ ...current, [selector]: draftText }))
     }
     if (styleChanged || textChanged) {
+      pushHistory()
       editRevision.current += 1
       setPendingEdits(true)
     }
-    pendingMove.current = null
     setFileWrite({ kind: 'idle', detail: '' })
     closeEditor()
-  }, [draftStyle, draftText, editableText, state.selectedSelector, state.document, hostPath, actions, persist, withEdit, closeEditor])
+  }, [draftStyle, draftText, editableText, state.selectedSelector, state.document, hostPath, actions, persist, pushHistory, withEdit, closeEditor])
 
   /** Remove only the selected frame element and stage its source deletion. */
   const deleteSelection = useCallback(() => {
@@ -511,17 +689,6 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
     setFileWrite({ kind: 'idle', detail: '' })
     postToFrame(frameRef.current, { kind: 'removeSelected', selector: source.selector, requestId })
   }, [deleting, fileWrite.kind, hostPath, state.mode, state.open, state.selected?.tag, state.selectedSelector])
-
-  /** Restore every deletion that has not yet been written into the source. */
-  const undoDeletions = useCallback(() => {
-    if (deletionsRef.current.length === 0 || fileWrite.kind === 'saving') return
-    cancelEditor()
-    deletionsRef.current = []
-    setDeletions([])
-    editRevision.current += 1
-    setFileWrite({ kind: 'idle', detail: '' })
-    actions.requestReload()
-  }, [actions, cancelEditor, fileWrite.kind])
 
   const resetStyle = useCallback(() => {
     setDraftStyle({})
@@ -580,11 +747,14 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
         if (editRevision.current === revision) setPendingEdits(false)
         setTextEdits(current => Object.fromEntries(Object.entries(current)
           .filter(([selector, value]) => textEdits[selector] !== value)))
+        // The file now holds everything that was pending, so it is the point
+        // undo can no longer reach back across.
+        clearHistory()
       })
       .catch((error: unknown) => {
         setFileWrite({ kind: 'failed', detail: error instanceof Error ? error.message : String(error) })
       })
-  }, [actions, applyToFile, deletions, fileRef, hostPath, persist, state.document, textEdits])
+  }, [actions, applyToFile, clearHistory, deletions, fileRef, hostPath, persist, state.document, textEdits])
 
   const hasFileEdits = (state.document?.edits.length ?? 0) > 0 || Object.keys(textEdits).length > 0 || deletions.length > 0
   const previousStyle = state.document?.edits.find(edit => edit.selector === state.selectedSelector)?.declarations ?? {}
@@ -594,6 +764,13 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
   )
   const statusDirty = state.dirty || draftDirty || pendingEdits || deletions.length > 0
   const rootSelected = /^(?:html|head|body)$/iu.test(state.selected?.tag ?? '')
+  // "component or button" is answerable from the tag: an interactive element
+  // is one the user can act on, everything else is a content block.
+  const elementType = interactiveTag(state.selected?.tag ?? '') ? t('typeInteractive') : t('typeBlock')
+  const displayNote = [
+    traits?.display === '' ? undefined : t('displayLabel') + ' ' + traits?.display,
+    traits?.resizable === false ? t('notResizable') : undefined,
+  ].filter(Boolean).join(' · ')
   const frameInteractive = frameAppliedMode !== null && frameAppliedMode.source === source
     && frameAppliedMode.reloadToken === state.reloadToken && frameAppliedMode.mode === state.mode
 
@@ -617,11 +794,12 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
           ))}
         </div>
         <div className={css.toolbarEnd}>
-          {deletions.length > 0 && (
-            <Tooltip label={t('undoDeletionsHint')}>
-              <Button variant="ghost" size="sm" disabled={deleting || fileWrite.kind === 'saving'} onClick={undoDeletions}>{t('undoDeletions')}</Button>
-            </Tooltip>
-          )}
+          <Tooltip label={t('undoHint')}>
+            <Button variant="ghost" size="sm" disabled={history.past.length === 0 || deleting} onClick={undo}>{t('undo')}</Button>
+          </Tooltip>
+          <Tooltip label={t('redoHint')}>
+            <Button variant="ghost" size="sm" disabled={history.future.length === 0 || deleting} onClick={redo}>{t('redo')}</Button>
+          </Tooltip>
           <Tag tone={statusDirty ? 'warning' : state.error !== null || fileWrite.kind === 'failed' ? 'danger' : 'neutral'}>
             {draftDirty ? t('unsaved') : state.saving ? t('saving') : statusDirty ? t('unsaved') : state.error !== null || fileWrite.kind === 'failed' ? t('saveFailed') : t('saved')}
           </Tag>
@@ -717,26 +895,106 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                 <section className={css.section}>
                   <h3 className={css.sectionTitle}>{t('styles')}</h3>
                   <div className={css.fields}>
-                    {STYLE_FIELDS.map(field => (
-                      <label key={field.key} className={css.field}>
-                        <span className={css.fieldLabel}>{t(field.label)}</span>
-                        <Input
-                          value={draftStyle[field.key] ?? ''}
-                          placeholder={computed[field.key] ?? ''}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                            const value = event.target.value
-                            setDraftStyle(current => ({ ...current, [field.key]: value }))
-                            setFileWrite({ kind: 'idle', detail: '' })
-                          }}
-                        />
-                      </label>
-                    ))}
+                    {STYLE_FIELDS.map(field => {
+                      const raw = draftStyle[field.key] ?? ''
+                      // While nothing is typed the field mirrors what the page
+                      // actually renders, so the reviewer sees the real value.
+                      const shown = raw === '' ? computed[field.key] ?? '' : raw
+                      const commit = (value: string): void => {
+                        setDraftStyle(current => ({ ...current, [field.key]: value }))
+                        setFileWrite({ kind: 'idle', detail: '' })
+                      }
+                      if (field.control.kind === 'color') {
+                        const hex = toHexColor(shown)
+                        return (
+                          <div key={field.key} className={css.field}>
+                            <label className={css.fieldLabel} htmlFor={`dsh-style-${field.key}`}>{t(field.label)}</label>
+                            <div className={css.colorField}>
+                              <input
+                                type="color"
+                                className={css.colorSwatch}
+                                aria-label={t(field.label)}
+                                value={hex}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => commit(event.target.value)}
+                              />
+                              <Input
+                                id={`dsh-style-${field.key}`}
+                                value={raw}
+                                placeholder={hex}
+                                spellCheck={false}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => commit(event.target.value.trim())}
+                              />
+                            </div>
+                          </div>
+                        )
+                      }
+                      if (field.control.kind === 'choice') {
+                        return (
+                          <div key={field.key} className={css.field}>
+                            <label className={css.fieldLabel} htmlFor={`dsh-style-${field.key}`}>{t(field.label)}</label>
+                            <select
+                              id={`dsh-style-${field.key}`}
+                              className={css.select}
+                              value={raw === '' ? '' : raw}
+                              onChange={(event: ChangeEvent<HTMLSelectElement>) => commit(event.target.value)}
+                            >
+                              <option value="">{t('inherit')}</option>
+                              {field.control.options.map(option => (
+                                <option key={option} value={option}>{option}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )
+                      }
+                      const { units, bare } = field.control
+                      const { amount, unit } = splitLength(shown, units, bare === true)
+                      return (
+                        <div key={field.key} className={css.field}>
+                          <label className={css.fieldLabel} htmlFor={`dsh-style-${field.key}`}>{t(field.label)}</label>
+                          <div className={css.lengthField}>
+                            <input
+                              id={`dsh-style-${field.key}`}
+                              type="number"
+                              className={css.lengthInput}
+                              // The box shows what the reviewer typed; the
+                              // page's own value stays in the placeholder so
+                              // resetting the draft can go back to nothing.
+                              value={raw === '' ? '' : splitLength(raw, units, bare === true).amount}
+                              placeholder={amount}
+                              onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                                const text = event.target.value
+                                commit(text === '' ? '' : joinLength(text, unit))
+                              }}
+                            />
+                            <select
+                              className={css.unitSelect}
+                              aria-label={t('unit')}
+                              value={unit}
+                              onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                                const current = raw === '' ? amount : splitLength(raw, units, bare === true).amount
+                                commit(current === '' ? '' : joinLength(current, event.target.value))
+                              }}
+                            >
+                              {units.map(option => (
+                                <option key={option === '' ? 'none' : option} value={option}>{option === '' ? t('unitless') : option}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </section>
                 <dl className={css.meta}>
+                  <dt>{t('elementType')}</dt>
+                  <dd>
+                    <code className={css.tagCode}>{elementType}</code>
+                    <span className={css.metaNote}>{displayNote}</span>
+                  </dd>
                   <dt>{t('size')}</dt>
                   <dd>{Math.round(state.selected.rect.width)} × {Math.round(state.selected.rect.height)}</dd>
                 </dl>
+                {traits?.movable === false && <p className={css.warn}>{t('dragUnavailable')}</p>}
                 <p className={css.hint}>{t('dragHint')}</p>
                 <p className={css.hint}>{t(rootSelected ? 'deleteRootHint' : 'deleteHint')}</p>
               </div>

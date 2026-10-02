@@ -84,6 +84,8 @@ interface DesignStoreActions {
   removeEdits: (draft: DesignStoreState, selectors: readonly string[]) => void
   /** Clear every edit. */
   clearEdits: (draft: DesignStoreState) => void
+  /** Adopt a document restored from the undo history, still counting as unsaved. */
+  restore: (draft: DesignStoreState, document: DesignAnnotationDocument | null) => void
   /** Mark a load as started. */
   beginLoad: (draft: DesignStoreState) => void
   /** Mark a load as finished. */
@@ -134,6 +136,10 @@ export function createDesignStore(file: string): EngineStoreHandle<DesignStoreSt
         state.document = document
         state.dirty = false
         state.error = null
+      },
+      restore: (state, document) => {
+        state.document = document
+        state.dirty = true
       },
       upsertEdit: (state, edit) => {
         const current = state.document ?? emptyDocument(file)

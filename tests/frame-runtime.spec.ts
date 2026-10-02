@@ -636,4 +636,74 @@ describe('injected design frame', () => {
     note.click()
     expect(container.style.display).toBe('none')
   })
+
+  it('says an element cannot be moved instead of quietly snapping it back', () => {
+    const { dom, send, reported } = frame('<div id="tile" style="translate: var(--position)">Move me</div>')
+    send({ kind: 'mode', mode: 'inspect' })
+    const tile = dom.window.document.querySelector('#tile') as HTMLElement
+    tile.click()
+
+    // The anchor tells the host this element is fixed in place.
+    const anchor = reported('select').at(-1)?.anchor as FrameAnchor | undefined
+    expect(anchor?.movable).toBe(false)
+    expect(anchor?.display).not.toBe('inline')
+
+    const handle = dom.window.document.querySelector('[data-dsh-design-drag-handle]') as HTMLButtonElement
+    expect(handle.style.display).toBe('none')
+    // Even a hidden handle explains itself if something reaches for it.
+    handle.dispatchEvent(pointer(dom, 'pointerdown', 0, 0))
+    expect(reported('unavailable')).toEqual([
+      { channel: CHANNEL, kind: 'unavailable', selector: 'div#tile', reason: 'move' },
+    ])
+  })
+
+  it('offers a drag handle on an element it can move', () => {
+    const { dom, send, reported } = frame('<div id="tile">Move me</div>')
+    send({ kind: 'mode', mode: 'inspect', dragHandleLabel: '移动' })
+    const tile = dom.window.document.querySelector('#tile') as HTMLElement
+    tile.click()
+    const handle = dom.window.document.querySelector('[data-dsh-design-drag-handle]') as HTMLButtonElement
+    expect(handle.style.display).toBe('grid')
+    expect((reported('select').at(-1)?.anchor as FrameAnchor).movable).toBe(true)
+  })
+
+  it('refuses a resize that cannot be done and says why', () => {
+    const { dom, send, reported } = frame('<div id="note" style="display: inline">note</div>')
+    send({ kind: 'mode', mode: 'inspect', resizeHandleLabel: '调整元素大小' })
+    const note = dom.window.document.querySelector('#note') as HTMLElement
+    note.click()
+    const container = dom.window.document.querySelector('[data-dsh-design-resize-handles]') as HTMLElement
+    expect(container.style.display).toBe('none')
+    const handle = dom.window.document.querySelector('[data-dsh-design-resize="se"]') as HTMLButtonElement
+    handle.dispatchEvent(pointer(dom, 'pointerdown', 0, 0))
+    expect(reported('unavailable')).toEqual([
+      { channel: CHANNEL, kind: 'unavailable', selector: 'div#note', reason: 'resize' },
+    ])
+  })
+
+  it('passes Cmd+Z up to the host but leaves the page its own undo', () => {
+    const { dom, send, reported } = frame('<input id="field"><textarea id="area"></textarea><div id="plain">text</div>')
+    send({ kind: 'mode', mode: 'inspect' })
+    const key = (init: { shiftKey?: boolean; target?: Element }): void => {
+      const event = new dom.window.KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true, ...init })
+      event.preventDefault()
+      ;(init.target ?? dom.window.document).dispatchEvent(event)
+    }
+
+    key({})
+    expect(reported('history')).toEqual([{ channel: CHANNEL, kind: 'history', action: 'undo' }])
+    key({ shiftKey: true })
+    expect(reported('history')).toHaveLength(2)
+    expect(reported('history').at(-1)?.action).toBe('redo')
+
+    // The same shortcut works on other keyboards.
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(reported('history')).toHaveLength(3)
+
+    // Typing in the page keeps the browser's own undo instead.
+    const before = reported('history').length
+    key({ target: dom.window.document.querySelector('#field') as Element })
+    key({ target: dom.window.document.querySelector('#area') as Element })
+    expect(reported('history')).toHaveLength(before)
+  })
 })

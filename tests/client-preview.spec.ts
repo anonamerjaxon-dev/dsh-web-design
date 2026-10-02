@@ -83,11 +83,16 @@ function mountPreview(
     fileRefOf,
   } as HtmlDesignBodyProps
   const view = render(createElement(HtmlDesignBody, props))
-  const frame = view.container.querySelector('iframe[data-html-design-preview]')
-  if (!(frame instanceof HTMLIFrameElement) || frame.contentWindow === null) {
-    throw new Error('HTML preview frame did not mount')
+  // Undo, redo and reset remount the preview (it is keyed by the reload token),
+  // so callers must always talk to the window that is on screen right now.
+  const liveFrame = (): HTMLIFrameElement => {
+    const current = view.container.querySelector('iframe[data-html-design-preview]')
+    if (!(current instanceof HTMLIFrameElement) || current.contentWindow === null) {
+      throw new Error('HTML preview frame did not mount')
+    }
+    return current
   }
-  const postMessage = vi.spyOn(frame.contentWindow, 'postMessage')
+  const postMessage = vi.spyOn(liveFrame().contentWindow, 'postMessage')
   const dispatchFromFrame = (
     source: HTMLIFrameElement,
     kind: 'ready' | 'select' | 'edit' | 'move',
@@ -105,10 +110,10 @@ function mountPreview(
     })
   }
   const select = (anchor: FrameAnchor = ANCHOR) => {
-    dispatchFromFrame(frame, 'edit', anchor)
+    dispatchFromFrame(liveFrame(), 'edit', anchor)
   }
   const singleSelect = (anchor: FrameAnchor = ANCHOR) => {
-    dispatchFromFrame(frame, 'select', anchor)
+    dispatchFromFrame(liveFrame(), 'select', anchor)
   }
   const dispatchModeApplied = (source: HTMLIFrameElement, mode: 'browse' | 'inspect') => {
     act(() => {
@@ -132,7 +137,33 @@ function mountPreview(
       }))
     })
   }
-  return { view, frame, props, store, loadReview, saveReview, applyToFile, postMessage, dispatchFromFrame, dispatchModeApplied, dispatchRemoveResult, select, singleSelect }
+  return { view, liveFrame, props, store, loadReview, saveReview, applyToFile, postMessage, dispatchFromFrame, dispatchModeApplied, dispatchRemoveResult, select, singleSelect }
+}
+
+/**
+ * Type a value into a length field the way a person does: the number box holds
+ * only digits, and the unit lives in the dropdown beside it.
+ */
+function setLength(dialog: HTMLElement, label: string, amount: string, unit = 'px'): void {
+  const field = within(dialog).getByLabelText(label).closest('div')?.parentElement
+  const input = field?.querySelector('input[type="number"]')
+  if (!(input instanceof HTMLElement)) throw new Error(`No length field for ${label}`)
+  const select = field?.querySelector('select')
+  if (select instanceof HTMLSelectElement && select.value !== unit) {
+    fireEvent.change(select, { target: { value: unit } })
+  }
+  fireEvent.change(input, { target: { value: amount } })
+}
+
+/** Read what a length field currently shows, split into its number and unit. */
+function readLength(dialog: HTMLElement, label: string): { readonly amount: string; readonly unit: string } {
+  const field = within(dialog).getByLabelText(label).closest('div')?.parentElement
+  const input = field?.querySelector('input[type="number"]')
+  const select = field?.querySelector('select')
+  return {
+    amount: input instanceof HTMLInputElement ? input.value : '',
+    unit: select instanceof HTMLSelectElement ? select.value : '',
+  }
 }
 
 function lastRemovalRequest(postMessage: ReturnType<typeof mountPreview>['postMessage']): { selector: string; requestId: string } {
@@ -216,7 +247,7 @@ describe('HTML design preview interactions', () => {
   })
 
   it('can select the containing block from the dialog without guessing its thin border', async () => {
-    const { view, postMessage, store, select, dispatchFromFrame, frame } = mountPreview()
+    const { view, postMessage, store, select, dispatchFromFrame, liveFrame } = mountPreview()
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select(ANCHOR)
@@ -224,36 +255,36 @@ describe('HTML design preview interactions', () => {
       .getByRole('button', { name: zh.selectParent }))
     expect(postMessage).toHaveBeenCalledWith({ channel: CHANNEL, kind: 'selectParent' }, '*')
 
-    dispatchFromFrame(frame, 'edit', PARENT_ANCHOR)
+    dispatchFromFrame(liveFrame(), 'edit', PARENT_ANCHOR)
     const dialog = view.getByRole('dialog', { name: zh.editElement })
     expect(within(dialog).getByText('MAIN')).toBeDefined()
     expect(within(dialog).getByTitle(PARENT_ANCHOR.selector).textContent).toBe(PARENT_ANCHOR.selector)
   })
 
   it('holds frame pointer input until the requested mode is applied', () => {
-    const { view, frame, dispatchModeApplied } = mountPreview()
-    expect(frame.getAttribute('data-frame-mode-ready')).toBe('false')
-    dispatchModeApplied(frame, 'browse')
-    expect(frame.getAttribute('data-frame-mode-ready')).toBe('true')
+    const { view, liveFrame, dispatchModeApplied } = mountPreview()
+    expect(liveFrame().getAttribute('data-frame-mode-ready')).toBe('false')
+    dispatchModeApplied(liveFrame(), 'browse')
+    expect(liveFrame().getAttribute('data-frame-mode-ready')).toBe('true')
 
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
-    expect(frame.getAttribute('data-frame-mode-ready')).toBe('false')
-    dispatchModeApplied(frame, 'browse')
-    expect(frame.getAttribute('data-frame-mode-ready')).toBe('false')
-    dispatchModeApplied(frame, 'inspect')
-    expect(frame.getAttribute('data-frame-mode-ready')).toBe('true')
+    expect(liveFrame().getAttribute('data-frame-mode-ready')).toBe('false')
+    dispatchModeApplied(liveFrame(), 'browse')
+    expect(liveFrame().getAttribute('data-frame-mode-ready')).toBe('false')
+    dispatchModeApplied(liveFrame(), 'inspect')
+    expect(liveFrame().getAttribute('data-frame-mode-ready')).toBe('true')
   })
 
   it('shows the page frame with only preview and edit modes and localized frame messages', () => {
-    const { view, frame, postMessage, dispatchFromFrame } = mountPreview()
-    expect(frame.getAttribute('src')).toMatch(/^blob:html-design-preview-/)
-    expect(frame.hasAttribute('srcdoc')).toBe(false)
+    const { view, liveFrame, postMessage, dispatchFromFrame } = mountPreview()
+    expect(liveFrame().getAttribute('src')).toMatch(/^blob:html-design-preview-/)
+    expect(liveFrame().hasAttribute('srcdoc')).toBe(false)
     expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
     expect(view.queryByRole('dialog')).toBeNull()
     expect(view.getByRole('button', { name: zh.modeBrowse }).getAttribute('aria-pressed')).toBe('true')
     expect(view.getByRole('button', { name: zh.modeInspect }).getAttribute('aria-pressed')).toBe('false')
     expect(view.getAllByRole('button').filter(button => button.getAttribute('aria-pressed') !== null)).toHaveLength(2)
-    dispatchFromFrame(frame, 'ready')
+    dispatchFromFrame(liveFrame(), 'ready')
     expect(postMessage).toHaveBeenCalledWith({
       channel: CHANNEL, kind: 'mode', mode: 'browse', dragHandleLabel: zh.dragHandle, resizeHandleLabel: zh.resizeHandle,
     }, '*')
@@ -265,12 +296,12 @@ describe('HTML design preview interactions', () => {
     }, '*')
     fireEvent.click(view.getByRole('button', { name: zh.modeBrowse }))
     expect(view.getByRole('button', { name: zh.modeBrowse }).getAttribute('aria-pressed')).toBe('true')
-    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(frame)
+    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(liveFrame())
   })
 
   it('releases each Blob URL when the document changes and the preview unmounts', () => {
-    const { view, frame, props } = mountPreview()
-    const firstUrl = frame.getAttribute('src')
+    const { view, liveFrame, props } = mountPreview()
+    const firstUrl = liveFrame().getAttribute('src')
     expect(firstUrl).toMatch(/^blob:html-design-preview-/)
 
     view.rerender(createElement(HtmlDesignBody, {
@@ -294,7 +325,7 @@ describe('HTML design preview interactions', () => {
     vi.stubGlobal('visualViewport', undefined)
     vi.stubGlobal('innerWidth', 1280)
     vi.stubGlobal('innerHeight', 800)
-    const { view, frame, select } = mountPreview()
+    const { view, liveFrame, select } = mountPreview()
     const stage = view.container.querySelector('[data-html-design-stage]')
     if (!(stage instanceof HTMLElement)) throw new Error('HTML preview stage did not mount')
     const sidebarBounds = new DOMRect(1000, 80, 260, 650)
@@ -308,14 +339,14 @@ describe('HTML design preview interactions', () => {
     expect(document.body.contains(dialog)).toBe(true)
     expect(view.container.contains(dialog)).toBe(false)
     expect(Number.parseFloat(dialog.style.left) + Number.parseFloat(dialog.style.width)).toBeLessThanOrEqual(sidebarBounds.left - 16)
-    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(frame)
+    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(liveFrame())
   })
 
   it('uses a short bottom editor when neither side of the preview has room', () => {
     vi.stubGlobal('visualViewport', undefined)
     vi.stubGlobal('innerWidth', 600)
     vi.stubGlobal('innerHeight', 800)
-    const { view, frame, select } = mountPreview()
+    const { view, liveFrame, select } = mountPreview()
     const stage = view.container.querySelector('[data-html-design-stage]')
     if (!(stage instanceof HTMLElement)) throw new Error('HTML preview stage did not mount')
     vi.spyOn(stage, 'getBoundingClientRect').mockReturnValue(new DOMRect(170, 80, 260, 660))
@@ -328,11 +359,11 @@ describe('HTML design preview interactions', () => {
     expect(Number.parseFloat(dialog.style.top)).toBeGreaterThanOrEqual(80 + 660 / 2)
     expect(Number.parseFloat(dialog.style.maxHeight)).toBeLessThanOrEqual(800 * 0.48)
     expect(Number.parseFloat(dialog.style.maxHeight)).toBeLessThanOrEqual(660 * 0.55)
-    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(frame)
+    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(liveFrame())
   })
 
   it('opens the floating editor only after inspect selection and discards a cancelled draft', () => {
-    const { view, frame, postMessage, saveReview, select } = mountPreview()
+    const { view, liveFrame, postMessage, saveReview, select } = mountPreview()
     select()
     expect(view.queryByRole('dialog')).toBeNull()
     expect(view.getByText(zh.saved)).toBeDefined()
@@ -340,10 +371,10 @@ describe('HTML design preview interactions', () => {
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
     const dialog = view.getByRole('dialog', { name: zh.editElement })
-    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(frame)
-    const initialFontSize = (within(dialog).getByLabelText(zh.fontSize) as HTMLInputElement).value
+    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(liveFrame())
+    const initialFontSize = readLength(dialog, zh.fontSize)
     const initialText = (within(dialog).getByLabelText(zh.textContent) as HTMLInputElement).value
-    fireEvent.change(within(dialog).getByLabelText(zh.fontSize), { target: { value: '22px' } })
+    setLength(dialog, zh.fontSize, '22')
     fireEvent.change(within(dialog).getByLabelText(zh.textContent), { target: { value: 'Changed heading' } })
     expect(view.getByText(zh.unsaved)).toBeDefined()
 
@@ -355,7 +386,7 @@ describe('HTML design preview interactions', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: zh.cancel }))
     expect(view.queryByRole('dialog')).toBeNull()
     expect(view.getByText(zh.saved)).toBeDefined()
-    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(frame)
+    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(liveFrame())
     expect(saveReview).not.toHaveBeenCalled()
     expect(postMessage.mock.calls.map(([message]) => message).filter(message =>
       typeof message === 'object' && message !== null && ('kind' in message) &&
@@ -363,7 +394,7 @@ describe('HTML design preview interactions', () => {
 
     select()
     const reopened = view.getByRole('dialog', { name: zh.editElement })
-    expect((within(reopened).getByLabelText(zh.fontSize) as HTMLInputElement).value).toBe(initialFontSize)
+    expect(readLength(reopened, zh.fontSize)).toEqual(initialFontSize)
     expect((within(reopened).getByLabelText(zh.textContent) as HTMLInputElement).value).toBe(initialText)
   })
 
@@ -377,7 +408,7 @@ describe('HTML design preview interactions', () => {
     expect(within(dialog).queryByRole('textbox', { name: zh.textContent })).toBeNull()
     expect(within(dialog).getByRole('button', { name: zh.copyLocator })).toBeDefined()
 
-    fireEvent.change(within(dialog).getByLabelText(zh.fontSize), { target: { value: '24px' } })
+    setLength(dialog, zh.fontSize, '24')
     fireEvent.click(within(dialog).getByRole('button', { name: zh.save }))
     await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
     expect(saveReview).toHaveBeenCalledWith(fileRefOf(RESOURCE_ADDRESS), expect.objectContaining({
@@ -391,7 +422,7 @@ describe('HTML design preview interactions', () => {
   })
 
   it('stages only the selected element for deletion and writes its original identity on explicit file save', async () => {
-    const { view, frame, store, postMessage, saveReview, applyToFile, dispatchRemoveResult, select } = mountPreview()
+    const { view, liveFrame, store, postMessage, saveReview, applyToFile, dispatchRemoveResult, select } = mountPreview()
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select(ANCHOR)
@@ -403,7 +434,7 @@ describe('HTML design preview interactions', () => {
     expect(applyToFile).not.toHaveBeenCalled()
     expect(saveReview).not.toHaveBeenCalled()
 
-    dispatchRemoveResult(frame, request.selector, request.requestId, true)
+    dispatchRemoveResult(liveFrame(), request.selector, request.requestId, true)
     expect(view.queryByRole('dialog')).toBeNull()
     expect(view.getByText(zh.unsaved)).toBeDefined()
     expect(store.getSnapshot().selected).toBeNull()
@@ -451,13 +482,13 @@ describe('HTML design preview interactions', () => {
   })
 
   it('replays a pending deletion into a refreshed frame', async () => {
-    const { view, frame, store, postMessage, dispatchFromFrame, dispatchRemoveResult, select } = mountPreview()
+    const { view, liveFrame, store, postMessage, dispatchFromFrame, dispatchRemoveResult, select } = mountPreview()
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
     fireEvent.click(within(view.getByRole('dialog', { name: zh.editElement })).getByRole('button', { name: zh.deleteElement }))
     const request = lastRemovalRequest(postMessage)
-    dispatchRemoveResult(frame, request.selector, request.requestId, true)
+    dispatchRemoveResult(liveFrame(), request.selector, request.requestId, true)
 
     act(() => store.actions.requestReload())
     const refreshedFrame = view.container.querySelector('iframe[data-html-design-preview]')
@@ -473,26 +504,26 @@ describe('HTML design preview interactions', () => {
     expect(view.getByText(zh.unsaved)).toBeDefined()
   })
 
-  it('undoes a pending deletion by refreshing the preview and omits it from the next file save', async () => {
-    const { view, frame, store, postMessage, applyToFile, dispatchFromFrame, dispatchRemoveResult, select } = mountPreview(reviewWithStyle())
+  it('undoes a pending deletion with the history control and omits it from the next file save', async () => {
+    const { view, liveFrame, store, postMessage, applyToFile, dispatchFromFrame, dispatchRemoveResult, select } = mountPreview(reviewWithStyle())
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
     fireEvent.click(within(view.getByRole('dialog', { name: zh.editElement })).getByRole('button', { name: zh.deleteElement }))
     const request = lastRemovalRequest(postMessage)
-    dispatchRemoveResult(frame, request.selector, request.requestId, true)
+    dispatchRemoveResult(liveFrame(), request.selector, request.requestId, true)
     expect(view.getByText(zh.unsaved)).toBeDefined()
-    expect(view.getByRole('button', { name: zh.undoDeletions })).toBeDefined()
     expect(applyToFile).not.toHaveBeenCalled()
 
-    fireEvent.click(view.getByRole('button', { name: zh.undoDeletions }))
-    const refreshedFrame = view.container.querySelector('iframe[data-html-design-preview]')
-    if (!(refreshedFrame instanceof HTMLIFrameElement) || refreshedFrame.contentWindow === null) {
-      throw new Error('Undone deletion did not refresh the HTML preview frame')
-    }
-    expect(refreshedFrame).not.toBe(frame)
-    expect(view.queryByRole('button', { name: zh.undoDeletions })).toBeNull()
-    expect(view.getByText(zh.saved)).toBeDefined()
+    const frameBeforeUndo = liveFrame()
+    fireEvent.click(view.getByRole('button', { name: zh.undo }))
+    // Undoing a deletion has to rebuild the page, or the element the reviewer
+    // deleted would still be missing.
+    const refreshedFrame = liveFrame()
+    expect(refreshedFrame).not.toBe(frameBeforeUndo)
+    // The stored style edit that was there before the deletion is back, so the
+    // review is unsaved again rather than silently reverted.
+    expect(store.getSnapshot().document?.edits).toEqual(reviewWithStyle().edits)
     const refreshedMessages = vi.spyOn(refreshedFrame.contentWindow, 'postMessage')
     dispatchFromFrame(refreshedFrame, 'ready')
     expect(refreshedMessages.mock.calls.some(([message]) =>
@@ -511,20 +542,20 @@ describe('HTML design preview interactions', () => {
   })
 
   it('keeps earlier staged deletions when a later frame removal fails', async () => {
-    const { view, frame, store, postMessage, applyToFile, dispatchRemoveResult, select } = mountPreview()
+    const { view, liveFrame, store, postMessage, applyToFile, dispatchRemoveResult, select } = mountPreview()
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select(ANCHOR)
     fireEvent.click(within(view.getByRole('dialog', { name: zh.editElement })).getByRole('button', { name: zh.deleteElement }))
     const first = lastRemovalRequest(postMessage)
-    dispatchRemoveResult(frame, first.selector, first.requestId, true)
+    dispatchRemoveResult(liveFrame(), first.selector, first.requestId, true)
     expect(view.getByText(zh.unsaved)).toBeDefined()
 
     select(PARENT_ANCHOR)
     const dialog = view.getByRole('dialog', { name: zh.editElement })
     fireEvent.click(within(dialog).getByRole('button', { name: zh.deleteElement }))
     const second = lastRemovalRequest(postMessage)
-    dispatchRemoveResult(frame, second.selector, second.requestId, false)
+    dispatchRemoveResult(liveFrame(), second.selector, second.requestId, false)
     expect(view.getByRole('dialog', { name: zh.editElement })).toBe(dialog)
     expect(view.getByRole('alert').textContent).toContain(zh.deleteFailed)
     expect(view.getByText(zh.unsaved)).toBeDefined()
@@ -539,42 +570,209 @@ describe('HTML design preview interactions', () => {
     }))
   })
 
-  it('keeps a dragged position as a draft, restores it on cancel, and persists it on save', async () => {
-    const { view, frame, store, postMessage, saveReview, applyToFile, dispatchFromFrame, select } = mountPreview()
+  it('commits a drag immediately and keeps it through cancel', async () => {
+    const { view, liveFrame, store, postMessage, saveReview, applyToFile, dispatchFromFrame, select } = mountPreview()
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
     const dialog = view.getByRole('dialog', { name: zh.editElement })
 
-    dispatchFromFrame(frame, 'move', ANCHOR, { translate: '30px 40px' })
-    expect(view.getByText(zh.unsaved)).toBeDefined()
-    expect(saveReview).not.toHaveBeenCalled()
-    fireEvent.click(within(dialog).getByRole('button', { name: zh.cancel }))
-    expect(view.getByText(zh.saved)).toBeDefined()
-    expect(postMessage).toHaveBeenCalledWith({
-      channel: CHANNEL, kind: 'style', selector: ANCHOR.selector, declarations: { translate: '' },
-    }, '*')
-    expect(saveReview).not.toHaveBeenCalled()
-    expect((view.getByRole('button', { name: zh.saveToFile }) as HTMLButtonElement).disabled).toBe(true)
-
-    select()
-    dispatchFromFrame(frame, 'move', ANCHOR, { translate: '50px 20px' })
-    expect(view.getByText(zh.unsaved)).toBeDefined()
-    fireEvent.click(within(view.getByRole('dialog', { name: zh.editElement })).getByRole('button', { name: zh.save }))
+    dispatchFromFrame(liveFrame(), 'move', ANCHOR, { translate: '30px 40px' })
+    // The drag is already written to the sidecar: there is no per-element step.
     await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
+    expect(view.getByText(zh.unsaved)).toBeDefined()
     expect(saveReview).toHaveBeenCalledWith(fileRefOf(RESOURCE_ADDRESS), expect.objectContaining({
-      edits: [expect.objectContaining({ selector: ANCHOR.selector, declarations: { translate: '50px 20px' } })],
+      edits: [expect.objectContaining({ selector: ANCHOR.selector, declarations: { translate: '30px 40px' } })],
     }))
+
+    // Closing the dialog must not undo what was already committed.
+    fireEvent.click(within(dialog).getByRole('button', { name: zh.cancel }))
+    expect(postMessage).not.toHaveBeenCalledWith(
+      { channel: CHANNEL, kind: 'style', selector: ANCHOR.selector, declarations: { translate: '' } }, '*')
     const saveFile = view.getByRole('button', { name: zh.saveToFile }) as HTMLButtonElement
     await waitFor(() => expect(saveFile.disabled).toBe(false))
     fireEvent.click(saveFile)
     await waitFor(() => expect(applyToFile).toHaveBeenCalledOnce())
     expect(applyToFile).toHaveBeenCalledWith({
       file: fileRefOf(RESOURCE_ADDRESS),
-      edits: [expect.objectContaining({ selector: ANCHOR.selector, declarations: { translate: '50px 20px' } })],
+      edits: [expect.objectContaining({ selector: ANCHOR.selector, declarations: { translate: '30px 40px' } })],
       textEdits: {},
       deletions: [],
     })
+  })
+
+  it('merges a later drag into the declarations the element already had', async () => {
+    const { view, liveFrame, store, saveReview, dispatchFromFrame, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+
+    dispatchFromFrame(liveFrame(), 'move', ANCHOR, { translate: '30px 40px' })
+    await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
+    dispatchFromFrame(liveFrame(), 'move', ANCHOR, { width: '320px' })
+    await waitFor(() => expect(saveReview).toHaveBeenCalledTimes(2))
+    expect(saveReview).toHaveBeenLastCalledWith(fileRefOf(RESOURCE_ADDRESS), expect.objectContaining({
+      edits: [expect.objectContaining({
+        selector: ANCHOR.selector,
+        declarations: { translate: '30px 40px', width: '320px' },
+      })],
+    }))
+  })
+
+  it('undoes and redoes a committed drag, and forgets history after saving to file', async () => {
+    const { view, liveFrame, store, saveReview, applyToFile, dispatchFromFrame, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+    dispatchFromFrame(liveFrame(), 'move', ANCHOR, { translate: '30px 40px' })
+    await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
+    expect(store.getSnapshot().document?.edits).toHaveLength(1)
+
+    fireEvent.click(view.getByRole('button', { name: zh.undo }))
+    // The very first snapshot predates any document at all, so undoing the
+    // first edit leaves an empty review rather than a document with no edits.
+    expect(store.getSnapshot().document?.edits ?? []).toHaveLength(0)
+    fireEvent.click(view.getByRole('button', { name: zh.redo }))
+    expect(store.getSnapshot().document?.edits).toEqual([
+      expect.objectContaining({ selector: ANCHOR.selector, declarations: { translate: '30px 40px' } }),
+    ])
+
+    fireEvent.click(view.getByRole('button', { name: zh.undo }))
+    expect(store.getSnapshot().document?.edits ?? []).toHaveLength(0)
+    // Undoing has no file edits left to write, so make one more change that
+    // survives the undo, and write that to the file.
+    select()
+    dispatchFromFrame(liveFrame(), 'move', ANCHOR, { width: '320px' })
+    await waitFor(() => expect(saveReview).toHaveBeenCalledTimes(2))
+    const saveFile = view.getByRole('button', { name: zh.saveToFile }) as HTMLButtonElement
+    fireEvent.click(saveFile)
+    await waitFor(() => expect(applyToFile).toHaveBeenCalledOnce())
+    // The file now holds the truth, so nothing is left to step back across.
+    expect((view.getByRole('button', { name: zh.undo }) as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByRole('button', { name: zh.redo }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('answers Cmd+Z in the preview with a history step', async () => {
+    const { view, liveFrame, store, saveReview, dispatchFromFrame, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+    dispatchFromFrame(liveFrame(), 'move', ANCHOR, { translate: '30px 40px' })
+    await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }))
+    })
+    expect(store.getSnapshot().document?.edits ?? []).toHaveLength(0)
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, bubbles: true }))
+    })
+    expect(store.getSnapshot().document?.edits).toHaveLength(1)
+  })
+
+  it('reports a handle that cannot act on the selected element', async () => {
+    const { view, liveFrame, store, dispatchFromFrame, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: liveFrame().contentWindow,
+        data: { channel: CHANNEL, kind: 'unavailable', selector: ANCHOR.selector, reason: 'resize' },
+      }))
+    })
+    expect(view.getByText(`${zh.handleUnavailable}: ${zh.resizeHandle}`)).toBeDefined()
+  })
+
+  it('offers a colour swatch beside the hex box instead of asking anyone to type rgb()', async () => {
+    const { view, liveFrame, store, saveReview, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+    const dialog = view.getByRole('dialog', { name: zh.editElement })
+
+    // The page computes rgb(0, 0, 0); the hex box shows the same colour as a
+    // hint, and the swatch beside it is what a person actually clicks.
+    const hex = within(dialog).getByLabelText(zh.color, { selector: 'input:not([type="color"])' }) as HTMLInputElement
+    expect(hex.placeholder).toBe('#000000')
+    const swatch = within(dialog).getByLabelText(zh.color, { selector: 'input[type="color"]' }) as HTMLInputElement
+    expect(swatch.value).toBe('#000000')
+
+    fireEvent.change(swatch, { target: { value: '#1a73e8' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: zh.save }))
+    await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
+    expect(saveReview).toHaveBeenCalledWith(fileRefOf(RESOURCE_ADDRESS), expect.objectContaining({
+      edits: [expect.objectContaining({ selector: ANCHOR.selector, declarations: { color: '#1a73e8' } })],
+    }))
+  })
+
+  it('turns rgb() computed values into hex for every colour field', async () => {
+    const { view, liveFrame, store, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select({ ...ANCHOR, computed: { color: 'rgb(0, 128, 255)', 'background-color': 'rgb(255, 255, 255)' } })
+    const dialog = view.getByRole('dialog', { name: zh.editElement })
+    const hexOf = (label: string): string => {
+      const box = within(dialog).getByLabelText(label, { selector: 'input:not([type="color"])' }) as HTMLInputElement
+      return box.placeholder
+    }
+    expect(hexOf(zh.color)).toBe('#0080ff')
+    expect(hexOf(zh.background)).toBe('#ffffff')
+  })
+
+  it('separates a length from its unit and offers only the units that field allows', async () => {
+    const { view, liveFrame, store, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+    const dialog = view.getByRole('dialog', { name: zh.editElement })
+
+    // letter-spacing has a keyword too, so its box can be left empty.
+    const spacing = within(dialog).getByLabelText(zh.letterSpacing).closest('div')?.parentElement
+    const options = [...(spacing?.querySelector('select')?.options ?? [])].map(option => option.value)
+    expect(options).toContain('normal')
+    expect(options).toContain('em')
+    // width takes a percentage but has no "normal".
+    const width = within(dialog).getByLabelText(zh.width).closest('div')?.parentElement
+    expect([...(width?.querySelector('select')?.options ?? [])].map(option => option.value)).toContain('%')
+    expect([...(width?.querySelector('select')?.options ?? [])].map(option => option.value)).not.toContain('normal')
+  })
+
+  it('offers font weight as a list of real weights rather than a free-text box', async () => {
+    const { view, liveFrame, store, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select()
+    const dialog = view.getByRole('dialog', { name: zh.editElement })
+    const weight = within(dialog).getByLabelText(zh.fontWeight) as HTMLSelectElement
+    expect(weight.tagName).toBe('SELECT')
+    // The page has no font-weight set, so the list starts on "inherit".
+    expect(weight.value).toBe('')
+    expect([...weight.options].map(option => option.value)).toEqual(['', '300', '400', '500', '600', '700', '800', '900'])
+    expect(weight.options[0]?.textContent).toBe(zh.inherit)
+  })
+
+  it('names the kind of element the reviewer picked', async () => {
+    const { view, liveFrame, store, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select({ ...ANCHOR, tag: 'button', selector: 'button#headline' })
+    const typeOf = (): string =>
+      view.getByRole('dialog', { name: zh.editElement }).querySelector('code')?.textContent ?? ''
+    expect(within(view.getByRole('dialog', { name: zh.editElement })).getByText(zh.elementType)).toBeDefined()
+    expect(typeOf()).toBe(zh.typeInteractive)
+
+    // A heading is a plain block, and it says so.
+    select()
+    expect(typeOf()).toBe(zh.typeBlock)
+  })
+
+  it('warns that an element cannot be dragged instead of letting it snap back', async () => {
+    const { view, liveFrame, store, select } = mountPreview()
+    await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
+    fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
+    select({ ...ANCHOR, movable: false, display: 'inline' })
+    expect(view.getByText(zh.dragUnavailable)).toBeDefined()
   })
 
   it('waits for the review write before enabling Save to file', async () => {
@@ -584,9 +782,7 @@ describe('HTML design preview interactions', () => {
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
-    fireEvent.change(within(view.getByRole('dialog', { name: zh.editElement })).getByLabelText(zh.fontSize), {
-      target: { value: '22px' },
-    })
+    setLength(view.getByRole('dialog', { name: zh.editElement }), zh.fontSize, '22')
     fireEvent.click(within(view.getByRole('dialog', { name: zh.editElement })).getByRole('button', { name: zh.save }))
     const saveFile = view.getByRole('button', { name: zh.saveToFile }) as HTMLButtonElement
     expect(saveFile.disabled).toBe(true)
@@ -603,10 +799,11 @@ describe('HTML design preview interactions', () => {
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
     const dialog = view.getByRole('dialog', { name: zh.editElement })
-    expect((within(dialog).getByLabelText(zh.fontSize) as HTMLInputElement).value).toBe('18px')
+    // 18 is the stored edit; 16 is what the page itself renders.
+    expect(readLength(dialog, zh.fontSize).amount).toBe('18')
 
     fireEvent.click(within(dialog).getByRole('button', { name: zh.resetStyle }))
-    expect((within(dialog).getByLabelText(zh.fontSize) as HTMLInputElement).value).toBe('')
+    expect(readLength(dialog, zh.fontSize)).toEqual({ amount: '', unit: 'px' })
     fireEvent.click(within(dialog).getByRole('button', { name: zh.cancel }))
 
     expect(saveReview).not.toHaveBeenCalled()
@@ -615,11 +812,11 @@ describe('HTML design preview interactions', () => {
       typeof message === 'object' && message !== null && ('kind' in message) &&
       (message.kind === 'style' || message.kind === 'text'))).toEqual([])
     select()
-    expect((within(view.getByRole('dialog', { name: zh.editElement })).getByLabelText(zh.fontSize) as HTMLInputElement).value).toBe('18px')
+    expect(readLength(view.getByRole('dialog', { name: zh.editElement }), zh.fontSize).amount).toBe('18')
   })
 
   it('replays mode, stored styles, and pending text when a refreshed frame becomes ready', async () => {
-    const { view, frame, store, saveReview, dispatchFromFrame, select } = mountPreview(reviewWithStyle())
+    const { view, liveFrame, store, saveReview, dispatchFromFrame, select } = mountPreview(reviewWithStyle())
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
@@ -628,12 +825,10 @@ describe('HTML design preview interactions', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: zh.save }))
     expect(saveReview).not.toHaveBeenCalled()
 
+    const frameBeforeReload = liveFrame()
     act(() => store.actions.requestReload())
-    const refreshedFrame = view.container.querySelector('iframe[data-html-design-preview]')
-    if (!(refreshedFrame instanceof HTMLIFrameElement) || refreshedFrame.contentWindow === null) {
-      throw new Error('Refreshed HTML preview frame did not mount')
-    }
-    expect(refreshedFrame).not.toBe(frame)
+    const refreshedFrame = liveFrame()
+    expect(refreshedFrame).not.toBe(frameBeforeReload)
     const refreshedMessages = vi.spyOn(refreshedFrame.contentWindow, 'postMessage')
     dispatchFromFrame(refreshedFrame, 'ready')
 
@@ -657,7 +852,7 @@ describe('HTML design preview interactions', () => {
 
     act(() => resolveRead({ path: PATH, document: null, storePath: `${PATH}.design.json` }))
     await waitFor(() => expect(save.disabled).toBe(false))
-    fireEvent.change(within(dialog).getByLabelText(zh.fontSize), { target: { value: '22px' } })
+    setLength(dialog, zh.fontSize, '22')
     fireEvent.click(save)
 
     await waitFor(() => expect(saveReview).toHaveBeenCalledOnce())
@@ -690,12 +885,12 @@ describe('HTML design preview interactions', () => {
   })
 
   it('sends saved style and text to the mounted page and persists the style review', async () => {
-    const { view, frame, store, postMessage, saveReview, select } = mountPreview()
+    const { view, liveFrame, store, postMessage, saveReview, select } = mountPreview()
     await waitFor(() => expect(store.getSnapshot().loading).toBe(false))
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     select()
     const dialog = view.getByRole('dialog', { name: zh.editElement })
-    fireEvent.change(within(dialog).getByLabelText(zh.fontSize), { target: { value: '22px' } })
+    setLength(dialog, zh.fontSize, '22')
     fireEvent.change(within(dialog).getByLabelText(zh.textContent), { target: { value: 'Changed heading' } })
     fireEvent.click(within(dialog).getByRole('button', { name: zh.save }))
 
@@ -711,6 +906,6 @@ describe('HTML design preview interactions', () => {
       channel: CHANNEL, kind: 'text', selector: ANCHOR.selector, value: 'Changed heading',
     }, '*')
     expect(view.queryByRole('dialog')).toBeNull()
-    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(frame)
+    expect(view.container.querySelector('iframe[data-html-design-preview]')).toBe(liveFrame())
   })
 })
