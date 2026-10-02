@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, Input, Tag, Tooltip, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Tag, Tooltip, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { DocumentPreviewProps } from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'
 import type { InjectFace, PropsLocale, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DesignAnnotationDocument, DesignApplyRequest, DesignApplyResult, DesignFileRef, DesignReadResult, ElementCommentAnchor, ElementEdit } from '../types.ts'
@@ -767,10 +767,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
   // "component or button" is answerable from the tag: an interactive element
   // is one the user can act on, everything else is a content block.
   const elementType = interactiveTag(state.selected?.tag ?? '') ? t('typeInteractive') : t('typeBlock')
-  const displayNote = [
-    traits?.display === '' ? undefined : t('displayLabel') + ' ' + traits?.display,
-    traits?.resizable === false ? t('notResizable') : undefined,
-  ].filter(Boolean).join(' · ')
+  const displayNote = traits?.display === undefined || traits.display === '' ? '' : traits.display
   const frameInteractive = frameAppliedMode !== null && frameAppliedMode.source === source
     && frameAppliedMode.reloadToken === state.reloadToken && frameAppliedMode.mode === state.mode
 
@@ -857,8 +854,10 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
             >
               <div className={css.editorHeader}>
                 <div className={css.editorIdentity}>
-                  <span className={css.elementTag} title={t('elementTag')}>{state.selected.tag.toUpperCase()}</span>
-                  <span className={css.locatorLabel}>{t('elementLocator')}</span>
+                  <div className={css.identityRow}>
+                    <span className={css.elementTag} title={t('elementTag')}>{state.selected.tag.toUpperCase()}</span>
+                    <span className={css.locatorLabel}>{t('elementLocator')}</span>
+                  </div>
                   <span className={css.editorSelector} title={state.selected.selector}>{state.selected.selector}</span>
                 </div>
                 <div className={css.editorHeaderActions}>
@@ -883,7 +882,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                   {editableText === null
                     ? <p className={css.hint}>{t('textSelectionHint')}</p>
                     : (
-                      <label className={css.field}>
+                      <label className={`${css.field} ${css.fieldStack}`}>
                         <span className={css.fieldLabel}>{t('textContent')}</span>
                         <textarea className={css.textInput} autoFocus value={draftText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
                           setDraftText(event.target.value)
@@ -909,7 +908,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                         return (
                           <div key={field.key} className={css.field}>
                             <label className={css.fieldLabel} htmlFor={`dsh-style-${field.key}`}>{t(field.label)}</label>
-                            <div className={css.colorField}>
+                            <div className={css.fieldControl}>
                               <input
                                 type="color"
                                 className={css.colorSwatch}
@@ -917,8 +916,10 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                                 value={hex}
                                 onChange={(event: ChangeEvent<HTMLInputElement>) => commit(event.target.value)}
                               />
-                              <Input
+                              <input
                                 id={`dsh-style-${field.key}`}
+                                type="text"
+                                className={css.lengthInput}
                                 value={raw}
                                 placeholder={hex}
                                 spellCheck={false}
@@ -932,17 +933,19 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                         return (
                           <div key={field.key} className={css.field}>
                             <label className={css.fieldLabel} htmlFor={`dsh-style-${field.key}`}>{t(field.label)}</label>
-                            <select
-                              id={`dsh-style-${field.key}`}
-                              className={css.select}
-                              value={raw === '' ? '' : raw}
-                              onChange={(event: ChangeEvent<HTMLSelectElement>) => commit(event.target.value)}
-                            >
-                              <option value="">{t('inherit')}</option>
-                              {field.control.options.map(option => (
-                                <option key={option} value={option}>{option}</option>
-                              ))}
-                            </select>
+                            <div className={css.fieldControl}>
+                              <select
+                                id={`dsh-style-${field.key}`}
+                                className={css.select}
+                                value={raw === '' ? '' : raw}
+                                onChange={(event: ChangeEvent<HTMLSelectElement>) => commit(event.target.value)}
+                              >
+                                <option value="">{t('inherit')}</option>
+                                {field.control.options.map(option => (
+                                  <option key={option} value={option}>{option}</option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
                         )
                       }
@@ -951,7 +954,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                       return (
                         <div key={field.key} className={css.field}>
                           <label className={css.fieldLabel} htmlFor={`dsh-style-${field.key}`}>{t(field.label)}</label>
-                          <div className={css.lengthField}>
+                          <div className={css.fieldControl}>
                             <input
                               id={`dsh-style-${field.key}`}
                               type="number"
@@ -985,18 +988,24 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
                     })}
                   </div>
                 </section>
-                <dl className={css.meta}>
-                  <dt>{t('elementType')}</dt>
-                  <dd>
-                    <code className={css.tagCode}>{elementType}</code>
-                    <span className={css.metaNote}>{displayNote}</span>
-                  </dd>
-                  <dt>{t('size')}</dt>
-                  <dd>{Math.round(state.selected.rect.width)} × {Math.round(state.selected.rect.height)}</dd>
-                </dl>
-                {traits?.movable === false && <p className={css.warn}>{t('dragUnavailable')}</p>}
-                <p className={css.hint}>{t('dragHint')}</p>
-                <p className={css.hint}>{t(rootSelected ? 'deleteRootHint' : 'deleteHint')}</p>
+                <section className={css.section}>
+                  <h3 className={css.sectionTitle}>{t('element')}</h3>
+                  <dl className={css.meta}>
+                    <dt>{t('elementType')}</dt>
+                    <dd>
+                      <code className={css.tagCode}>{elementType}</code>
+                      {displayNote !== '' && <span className={css.metaNote}>{displayNote}</span>}
+                    </dd>
+                    <dt>{t('size')}</dt>
+                    <dd>{Math.round(state.selected.rect.width)} × {Math.round(state.selected.rect.height)}</dd>
+                  </dl>
+                  <div className={css.notes}>
+                    {traits?.movable === false && <p className={css.warn}>{t('dragUnavailable')}</p>}
+                    {traits?.resizable === false && !rootSelected && <p className={css.hint}>{t('notResizable')}</p>}
+                    <p className={css.hint}>{t('dragHint')}</p>
+                    <p className={css.hint}>{t(rootSelected ? 'deleteRootHint' : 'deleteHint')}</p>
+                  </div>
+                </section>
               </div>
               <div className={css.editorFooter}>
                 <Button variant="ghost" size="sm" onClick={resetStyle}>{t('resetStyle')}</Button>

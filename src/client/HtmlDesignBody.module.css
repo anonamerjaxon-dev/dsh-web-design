@@ -171,22 +171,41 @@
 .editorHeaderAction:hover { text-decoration-color: currentColor; }
 .editorHeaderAction:focus-visible { outline: 2px solid var(--dsw-alias-label-primary); outline-offset: 2px; }
 
+/* The identity reads as one block: a tag chip above the selector, so a long
+   selector has the full width instead of being squeezed against the actions. */
 .editorIdentity {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   min-width: 0;
   flex: 1 1 auto;
 }
 
+.identityRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .elementTag {
   flex: 0 0 auto;
-  padding: 4px 7px;
+  padding: 3px 7px;
   border-radius: 6px;
   background: var(--dsw-alias-interactive-bg-hover);
   font-family: var(--dsw-font-mono, ui-monospace, monospace);
   font-size: 11px;
   font-weight: 700;
+  line-height: 1.3;
+}
+
+.locatorLabel {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .editorSelector {
@@ -195,20 +214,15 @@
   color: var(--dsw-alias-label-secondary);
   font-family: var(--dsw-font-mono, ui-monospace, monospace);
   font-size: 11px;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.locatorLabel {
-  flex: 0 0 auto;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
 }
 
 .editorScroll {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -231,10 +245,17 @@
   background: var(--dsw-alias-interactive-bg-hover-danger);
 }
 
+/* Sections are separated by a rule instead of by blank space alone, so a long
+   form still reads as a list of groups. */
 .section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+.section + .section {
+  padding-top: 18px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
 }
 
 .sectionTitle {
@@ -243,106 +264,150 @@
   gap: 6px;
   margin: 0;
   color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .meta {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 8px;
+  align-items: baseline;
+  gap: 6px 12px;
   margin: 0;
   font-size: 12px;
 }
 
 .meta dt {
   color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
 }
 
 .meta dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
   margin: 0;
   overflow-wrap: anywhere;
 }
 
 .tagCode {
-  padding: 1px 5px;
+  padding: 2px 7px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 4px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
   font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .metaNote {
-  margin-left: 6px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }
 
+/* Notes are a quiet block of guidance, not a stack of stray sentences. */
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .warn {
+  display: flex;
+  gap: 6px;
   margin: 0;
   color: var(--dsw-alias-label-warning, #b4690e);
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .hint {
   margin: 0;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
+/* One field per row. A number box, a unit dropdown and a colour swatch each
+   need real width, and a shared label column stops the labels drifting out of
+   alignment when one of them is longer than another. */
 .fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
   min-width: 0;
+  padding: 5px 0;
 }
 
 .fieldLabel {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
-.lengthField {
+.fieldControl {
   display: flex;
-  gap: 6px;
-  min-width: 0;
-}
-
-.colorField {
-  display: flex;
-  gap: 6px;
   align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+/* A tall control needs the full width, so its label sits above it instead of
+   in the shared label column. */
+.fieldStack {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  padding: 0;
 }
 
 .colorSwatch {
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 5px;
+  border-radius: 6px;
   background: none;
   cursor: pointer;
+}
+
+.colorSwatch::-webkit-color-swatch-wrapper { padding: 2px; }
+.colorSwatch::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+.colorSwatch:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 2px;
 }
 
 .lengthInput,
 .unitSelect,
 .select {
   box-sizing: border-box;
-  min-height: 26px;
-  padding: 2px 6px;
+  height: 30px;
+  padding: 0 8px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 12px;
+  line-height: 28px;
 }
 
 .lengthInput {
@@ -352,10 +417,19 @@
 
 .unitSelect {
   flex: 0 0 auto;
+  width: 68px;
 }
 
 .select {
   width: 100%;
+}
+
+.lengthInput:focus-visible,
+.unitSelect:focus-visible,
+.select:focus-visible {
+  border-color: var(--dsw-alias-label-primary);
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: -1px;
 }
 
 .textInput {
@@ -394,9 +468,26 @@
   .stage { padding: 8px; }
 }
 
-.editor[data-compact] .fields { grid-template-columns: minmax(0, 1fr); }
-.editor[data-compact] .editorHeader,
-.editor[data-compact] .editorFooter { padding: 10px 12px; }
-.editor[data-compact] .editorFooter { flex-wrap: wrap; }
+/* In a narrow editor the label sits above its control rather than beside it,
+   which keeps long locale strings from squeezing the inputs. */
+.editor[data-compact] .field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.editor[data-compact] .editorHeader {
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+
+/* The actions keep their own line instead of crowding the identity. */
+.editor[data-compact] .editorHeaderActions {
+  flex-basis: 100%;
+  justify-content: flex-start;
+  order: 2;
+}
+
+.editor[data-compact] .editorFooter { flex-wrap: wrap; padding: 10px 12px; }
 .editor[data-compact] .footerSpace { flex-basis: 100%; height: 0; }
 .editor[data-compact] .editorScroll { padding: 12px; }
