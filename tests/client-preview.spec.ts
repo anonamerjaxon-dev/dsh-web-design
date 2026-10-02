@@ -255,13 +255,13 @@ describe('HTML design preview interactions', () => {
     expect(view.getAllByRole('button').filter(button => button.getAttribute('aria-pressed') !== null)).toHaveLength(2)
     dispatchFromFrame(frame, 'ready')
     expect(postMessage).toHaveBeenCalledWith({
-      channel: CHANNEL, kind: 'mode', mode: 'browse', dragHandleLabel: zh.dragHandle,
+      channel: CHANNEL, kind: 'mode', mode: 'browse', dragHandleLabel: zh.dragHandle, resizeHandleLabel: zh.resizeHandle,
     }, '*')
 
     fireEvent.click(view.getByRole('button', { name: zh.modeInspect }))
     expect(view.getByRole('button', { name: zh.modeInspect }).getAttribute('aria-pressed')).toBe('true')
     expect(postMessage).toHaveBeenCalledWith({
-      channel: CHANNEL, kind: 'mode', mode: 'inspect', dragHandleLabel: zh.dragHandle,
+      channel: CHANNEL, kind: 'mode', mode: 'inspect', dragHandleLabel: zh.dragHandle, resizeHandleLabel: zh.resizeHandle,
     }, '*')
     fireEvent.click(view.getByRole('button', { name: zh.modeBrowse }))
     expect(view.getByRole('button', { name: zh.modeBrowse }).getAttribute('aria-pressed')).toBe('true')
@@ -638,7 +638,7 @@ describe('HTML design preview interactions', () => {
     dispatchFromFrame(refreshedFrame, 'ready')
 
     expect(refreshedMessages.mock.calls).toEqual([
-      [{ channel: CHANNEL, kind: 'mode', mode: 'inspect', dragHandleLabel: zh.dragHandle }, '*'],
+      [{ channel: CHANNEL, kind: 'mode', mode: 'inspect', dragHandleLabel: zh.dragHandle, resizeHandleLabel: zh.resizeHandle }, '*'],
       [{ channel: CHANNEL, kind: 'style', selector: ANCHOR.selector, declarations: { 'font-size': '18px' } }, '*'],
       [{ channel: CHANNEL, kind: 'text', selector: ANCHOR.selector, value: 'Pending heading' }, '*'],
     ])

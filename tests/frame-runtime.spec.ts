@@ -530,4 +530,110 @@ describe('injected design frame', () => {
     expect(tile.style.getPropertyValue('translate')).toBe('var(--position)')
     expect(reported('move')).toEqual([])
   })
+
+  it('resizes from the south-east handle and reports the new width and height', () => {
+    const { dom, send, reported } = frame('<div id="tile" style="width: 200px">Resize me</div>')
+    send({ kind: 'mode', mode: 'inspect', resizeHandleLabel: '调整元素大小' })
+    const tile = dom.window.document.querySelector('#tile') as HTMLElement
+    vi.spyOn(tile, 'getBoundingClientRect').mockReturnValue(new dom.window.DOMRect(0, 0, 200, 50))
+    tile.click()
+    const container = dom.window.document.querySelector('[data-dsh-design-resize-handles]') as HTMLElement
+    expect(container.style.display).toBe('block')
+    const handle = dom.window.document.querySelector('[data-dsh-design-resize="se"]') as HTMLButtonElement
+    expect(handle).toBeInstanceOf(dom.window.HTMLButtonElement)
+    expect(handle.getAttribute('aria-label')).toBe('调整元素大小')
+    expect(handle.getAttribute('title')).toBe('调整元素大小')
+    expect(reported('move')).toEqual([])
+
+    handle.dispatchEvent(pointer(dom, 'pointerdown', 100, 100))
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 115, 130))
+    expect(tile.style.getPropertyValue('width')).toBe('215px')
+    expect(tile.style.getPropertyValue('height')).toBe('80px')
+    expect(tile.style.getPropertyValue('translate')).toBe('')
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 95, 70))
+    expect(tile.style.getPropertyValue('width')).toBe('195px')
+    expect(tile.style.getPropertyValue('height')).toBe('20px')
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 95, 70))
+
+    const move = reported('move').at(-1)
+    expect(move).toMatchObject({
+      kind: 'move', selector: 'div#tile',
+      declarations: { width: '195px', height: '20px' },
+      restore: { width: '200px', height: '', translate: '' },
+      anchor: { selector: 'div#tile', editableText: 'Resize me' },
+    })
+    expect(reported('move')).toHaveLength(1)
+  })
+
+  it('keeps the opposite edge anchored when resizing from the west handle', () => {
+    const { dom, send, reported } = frame('<div id="panel" style="width: 300px; translate: 10px 5px">Panel</div>')
+    send({ kind: 'mode', mode: 'inspect' })
+    const panel = dom.window.document.querySelector('#panel') as HTMLElement
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue(new dom.window.DOMRect(0, 0, 300, 60))
+    panel.click()
+    const handle = dom.window.document.querySelector('[data-dsh-design-resize="w"]') as HTMLButtonElement
+    handle.dispatchEvent(pointer(dom, 'pointerdown', 100, 100))
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 85, 100))
+    expect(panel.style.getPropertyValue('width')).toBe('315px')
+    expect(panel.style.getPropertyValue('translate')).toBe('calc(10px - 15px) calc(5px + 0px)')
+    dom.window.document.dispatchEvent(pointer(dom, 'pointerup', 85, 100))
+
+    const move = reported('move').at(-1)
+    expect(move).toMatchObject({
+      kind: 'move', selector: 'div#panel',
+      declarations: { width: '315px', translate: 'calc(10px - 15px) calc(5px + 0px)' },
+      restore: { width: '300px', height: '', translate: '10px 5px' },
+    })
+    expect(reported('move')).toHaveLength(1)
+  })
+
+  it('restores an in-progress resize when switching back to preview', () => {
+    const { dom, send, reported } = frame('<button id="tile" type="button" style="width: 120px">Click me</button>')
+    send({ kind: 'mode', mode: 'inspect' })
+    const tile = dom.window.document.querySelector('#tile') as HTMLButtonElement
+    vi.spyOn(tile, 'getBoundingClientRect').mockReturnValue(new dom.window.DOMRect(0, 0, 120, 40))
+    let clicks = 0
+    tile.addEventListener('click', () => { clicks += 1 })
+    tile.click()
+    expect(clicks).toBe(0)
+    const handle = dom.window.document.querySelector('[data-dsh-design-resize="se"]') as HTMLButtonElement
+    handle.dispatchEvent(pointer(dom, 'pointerdown', 10, 10))
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 30, 40))
+    expect(tile.style.getPropertyValue('width')).toBe('140px')
+    send({ kind: 'mode', mode: 'browse' })
+
+    expect(tile.style.getPropertyValue('width')).toBe('120px')
+    expect(tile.style.getPropertyValue('height')).toBe('')
+    expect(reported('move')).toEqual([])
+    tile.click()
+    expect(clicks).toBe(1)
+  })
+
+  it('cancels a resize with pointercancel without committing', () => {
+    const { dom, send, reported } = frame('<div id="card" style="height: 80px">Card</div>')
+    send({ kind: 'mode', mode: 'inspect' })
+    const card = dom.window.document.querySelector('#card') as HTMLElement
+    vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(new dom.window.DOMRect(0, 0, 160, 80))
+    card.click()
+    const handle = dom.window.document.querySelector('[data-dsh-design-resize="se"]') as HTMLButtonElement
+    handle.dispatchEvent(pointer(dom, 'pointerdown', 0, 0))
+    dom.window.document.dispatchEvent(pointer(dom, 'pointermove', 25, 15))
+    expect(card.style.getPropertyValue('height')).toBe('95px')
+    dom.window.document.dispatchEvent(pointer(dom, 'pointercancel', 25, 15))
+    expect(card.style.getPropertyValue('height')).toBe('80px')
+    expect(card.style.getPropertyValue('width')).toBe('')
+    expect(reported('move')).toEqual([])
+  })
+
+  it('offers no resize handles for an inline element', () => {
+    const { dom, send } = frame('<div id="card">Card</div><div id="note" style="display: inline">note</div>')
+    send({ kind: 'mode', mode: 'inspect' })
+    const container = dom.window.document.querySelector('[data-dsh-design-resize-handles]') as HTMLElement
+    const card = dom.window.document.querySelector('#card') as HTMLElement
+    card.click()
+    expect(container.style.display).toBe('block')
+    const note = dom.window.document.querySelector('#note') as HTMLElement
+    note.click()
+    expect(container.style.display).toBe('none')
+  })
 })

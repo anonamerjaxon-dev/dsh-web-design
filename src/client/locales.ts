@@ -53,8 +53,9 @@ export const zh = {
   locatorCopied: '已复制',
   locatorCopyFailed: '复制失败',
   textSelectionHint: '此元素没有唯一的直属文字。请双击具体的文字元素。',
-  dragHint: '拖动选中框的手柄可以移动元素。',
+  dragHint: '拖动选中框的手柄可以移动元素；拖动四角或四边可以调整大小。',
   dragHandle: '拖动选中元素',
+  resizeHandle: '调整元素大小',
   fontSize: '字号',
   fontWeight: '字重',
   lineHeight: '行高',
@@ -66,6 +67,8 @@ export const zh = {
   borderRadius: '圆角',
   resetStyle: '重置',
   styles: '样式修改',
+  width: '宽度',
+  height: '高度',
 }
 
 /** English copy. */
@@ -110,8 +113,9 @@ export const en = {
   locatorCopied: 'Copied',
   locatorCopyFailed: 'Copy failed',
   textSelectionHint: 'This element has no unique direct text. Double-click the exact text element instead.',
-  dragHint: 'Drag the selected outline handle to move the element.',
+  dragHint: 'Drag the outline handle to move the element; drag a corner or edge to resize it.',
   dragHandle: 'Drag selected element',
+  resizeHandle: 'Resize selected element',
   fontSize: 'Font size',
   fontWeight: 'Font weight',
   lineHeight: 'Line height',
@@ -123,6 +127,8 @@ export const en = {
   borderRadius: 'Corner radius',
   resetStyle: 'Reset',
   styles: 'Style edits',
+  width: 'Width',
+  height: 'Height',
 }
 
 /** Every locale key this preview's dictionary declares. */

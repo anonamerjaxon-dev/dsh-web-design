@@ -55,7 +55,7 @@ export interface FrameAnchor {
 
 /** A message the parent sends to the frame. */
 export type ParentToFrame =
-  | { readonly channel: typeof CHANNEL; readonly kind: 'mode'; readonly mode: string; readonly dragHandleLabel?: string }
+  | { readonly channel: typeof CHANNEL; readonly kind: 'mode'; readonly mode: string; readonly dragHandleLabel?: string; readonly resizeHandleLabel?: string }
   | { readonly channel: typeof CHANNEL; readonly kind: 'style'; readonly selector: string; readonly declarations: Readonly<Record<string, string>> }
   | { readonly channel: typeof CHANNEL; readonly kind: 'text'; readonly selector: string; readonly value: string }
   | { readonly channel: typeof CHANNEL; readonly kind: 'selectParent' }
@@ -105,7 +105,16 @@ function runtime(channel: string): void {
     strategy: 'inline' | 'translate'; baseX: string; baseY: string; baseZ: string | null
     restore: Record<string, string>; priorities: Record<string, string>; declarations: Record<string, string> | null
   } | null = null
+  let resize: {
+    pointerId: number; element: HTMLElement; selector: string
+    west: boolean; east: boolean; north: boolean; south: boolean
+    x: number; y: number; startW: number; startH: number
+    contentBox: boolean; insetX: number; insetY: number
+    baseX: string; baseY: string; baseZ: string | null
+    restore: Record<string, string>; priorities: Record<string, string>; declarations: Record<string, string> | null
+  } | null = null
   let handle: HTMLButtonElement | null = null
+  let resizeHandles: HTMLDivElement | null = null
 
   const post = (message: Record<string, unknown>): void => {
     try {
@@ -277,6 +286,17 @@ function runtime(channel: string): void {
     return { x: parts[0] as string, y: parts[1] ?? '0px', z: parts[2] ?? null }
   }
 
+  /** Join translate axes, keeping both in the same notation. jsdom's cssstyle
+   *  silently drops a `translate` that mixes `calc()` with a plain length, so a
+   *  plain axis is lifted into `calc(base + 0px)` whenever the other is calc. */
+  const translateValue = (x: string, y: string, z: string | null): string => {
+    const xCalc = x.startsWith('calc(')
+    const yCalc = y.startsWith('calc(')
+    const left = yCalc && !xCalc ? 'calc(' + x + ' + 0px)' : x
+    const right = xCalc && !yCalc ? 'calc(' + y + ' + 0px)' : y
+    return left + ' ' + right + (z === null ? '' : ' ' + z)
+  }
+
   /** Resolve one side of a relatively positioned inline element. */
   const positionBase = (leading: string, trailing: string): string | null => {
     if (leading !== '' && leading !== 'auto') return lengthTerm.test(leading) ? leading : null
@@ -290,10 +310,10 @@ function runtime(channel: string): void {
     return 'calc(' + base + (delta < 0 ? ' - ' : ' + ') + Math.abs(delta) + 'px)'
   }
 
-  const restoreDragStyles = (active: NonNullable<typeof drag>): void => {
-    for (const [property, value] of Object.entries(active.restore)) {
-      if (value === '') active.element.style.removeProperty(property)
-      else active.element.style.setProperty(property, value, active.priorities[property] ?? '')
+  const restoreInlineStyles = (element: HTMLElement | SVGElement, restore: Record<string, string>, priorities: Record<string, string>): void => {
+    for (const [property, value] of Object.entries(restore)) {
+      if (value === '') element.style.removeProperty(property)
+      else element.style.setProperty(property, value, priorities[property] ?? '')
     }
   }
 
@@ -303,7 +323,70 @@ function runtime(channel: string): void {
     drag = null
     if (handle !== null) handle.style.cursor = 'grab'
     if (!commit || active.declarations === null) {
-      restoreDragStyles(active)
+      restoreInlineStyles(active.element, active.restore, active.priorities)
+      place(box as HTMLDivElement, selected?.isConnected ? selected : null)
+      return
+    }
+    post({ kind: 'move', selector: active.selector, declarations: active.declarations, restore: active.restore, anchor: anchorFor(active.element, active.selector) })
+  }
+
+  /** Elements whose inline `width`/`height` declarations change their box. */
+  const resizable = (element: Element): element is HTMLElement => {
+    if (!(element instanceof HTMLElement)) return false
+    const display = (doc.defaultView?.getComputedStyle(element).getPropertyValue('display') ?? '').trim()
+    // Inline boxes ignore width/height entirely, so a resize handle on one
+    // would drag without resizing anything.
+    return display !== 'inline' && display !== 'inline-run-in' && display !== 'contents' && display !== 'none'
+  }
+
+  /** Sum computed box-model lengths, tolerating a stylesheet that omits them. */
+  const lengthSum = (computed: CSSStyleDeclaration | undefined, names: readonly string[]): number => {
+    let total = 0
+    for (const name of names) {
+      const value = Number.parseFloat(computed?.getPropertyValue(name) ?? '')
+      if (Number.isFinite(value)) total += value
+    }
+    return total
+  }
+
+  /** Begin a resize gesture from one outline handle. */
+  const beginResize = (event: PointerEvent, name: string): void => {
+    if (mode !== 'inspect' || drag !== null || resize !== null) return
+    const element = selected
+    if (element === null || !element.isConnected || !resizable(element)) return
+    const computed = doc.defaultView?.getComputedStyle(element)
+    const restore: Record<string, string> = {}
+    const priorities: Record<string, string> = {}
+    for (const property of ['width', 'height', 'translate']) {
+      restore[property] = element.style.getPropertyValue(property)
+      priorities[property] = element.style.getPropertyPriority(property)
+    }
+    if (Object.values(priorities).some(priority => priority === 'important')) return
+    const original = restore.translate ?? ''
+    if (original !== '' && translateParts(original.trim()) === null) return
+    const baseline = translateParts(computed?.getPropertyValue('translate').trim() || original)
+    if (baseline === null) return
+    const rect = element.getBoundingClientRect()
+    event.preventDefault()
+    event.stopPropagation()
+    resize = {
+      pointerId: event.pointerId, element, selector: selectedSelector ?? selectorFor(element),
+      west: name.includes('w'), east: name.includes('e'), north: name.includes('n'), south: name.includes('s'),
+      x: event.clientX, y: event.clientY, startW: rect.width, startH: rect.height,
+      contentBox: computed?.getPropertyValue('box-sizing').trim() === 'content-box',
+      insetX: lengthSum(computed, ['padding-left', 'padding-right', 'border-left-width', 'border-right-width']),
+      insetY: lengthSum(computed, ['padding-top', 'padding-bottom', 'border-top-width', 'border-bottom-width']),
+      baseX: baseline.x, baseY: baseline.y, baseZ: baseline.z,
+      restore, priorities, declarations: null,
+    }
+  }
+
+  const stopResize = (commit: boolean): void => {
+    const active = resize
+    if (active === null) return
+    resize = null
+    if (!commit || active.declarations === null) {
+      restoreInlineStyles(active.element, active.restore, active.priorities)
       place(box as HTMLDivElement, selected?.isConnected ? selected : null)
       return
     }
@@ -324,6 +407,7 @@ function runtime(channel: string): void {
   }
 
   const removeElement = (element: Element): string[] => {
+    stopResize(false)
     stopDrag(false)
     const removedSelectors = new Set<string>()
     for (const [selector, original] of originalTargets) {
@@ -381,7 +465,7 @@ function runtime(channel: string): void {
     handle.style.cssText = 'position:absolute;top:-32px;right:0;width:26px;height:26px;display:grid;place-items:center;padding:0;border:2px solid #4c8dff;border-radius:6px;background:#fff;color:#2459c7;font:18px/1 sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);cursor:grab;pointer-events:auto;touch-action:none;user-select:none'
     handle.addEventListener('click', event => { event.preventDefault(); event.stopPropagation() })
     handle.addEventListener('pointerdown', event => {
-      if (mode !== 'inspect' || drag !== null || selected === null || !selected.isConnected || !(selected instanceof HTMLElement || selected instanceof SVGElement)) return
+      if (mode !== 'inspect' || drag !== null || resize !== null || selected === null || !selected.isConnected || !(selected instanceof HTMLElement || selected instanceof SVGElement)) return
       const element = selected
       const computed = doc.defaultView?.getComputedStyle(element)
       const strategy = element instanceof HTMLElement && computed?.display === 'inline' ? 'inline' : 'translate'
@@ -421,19 +505,48 @@ function runtime(channel: string): void {
       }
       if (handle !== null) handle.style.cursor = 'grabbing'
     })
-    box.append(handle)
+    resizeHandles = doc.createElement('div')
+    resizeHandles.setAttribute('data-dsh-design-resize-handles', '')
+    resizeHandles.style.cssText = 'position:absolute;inset:0;pointer-events:none;display:none'
+    const names = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
+    const geometry: Record<(typeof names)[number], { readonly at: string; readonly cursor: string }> = {
+      nw: { at: 'left:-7px;top:-7px', cursor: 'nwse-resize' },
+      n: { at: 'left:calc(50% - 5px);top:-7px', cursor: 'ns-resize' },
+      ne: { at: 'right:-7px;top:-7px', cursor: 'nesw-resize' },
+      e: { at: 'right:-7px;top:calc(50% - 5px)', cursor: 'ew-resize' },
+      se: { at: 'right:-7px;bottom:-7px', cursor: 'nwse-resize' },
+      s: { at: 'left:calc(50% - 5px);bottom:-7px', cursor: 'ns-resize' },
+      sw: { at: 'left:-7px;bottom:-7px', cursor: 'nesw-resize' },
+      w: { at: 'left:-7px;top:calc(50% - 5px)', cursor: 'ew-resize' },
+    }
+    for (const name of names) {
+      const corner = doc.createElement('button')
+      corner.type = 'button'
+      corner.setAttribute('data-dsh-design-resize', name)
+      corner.style.cssText = 'position:absolute;width:11px;height:11px;padding:0;box-sizing:border-box;'
+        + 'border:2px solid #4c8dff;border-radius:2px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);'
+        + 'pointer-events:auto;touch-action:none;user-select:none;cursor:' + geometry[name].cursor + ';' + geometry[name].at
+      corner.addEventListener('click', event => { event.preventDefault(); event.stopPropagation() })
+      corner.addEventListener('pointerdown', event => { beginResize(event, name) })
+      resizeHandles.append(corner)
+    }
+    box.append(handle, resizeHandles)
     doc.body.append(overlay, box)
   }
 
   const place = (node: HTMLDivElement, element: Element | null): void => {
     if (element === null) {
       node.style.display = 'none'
+      if (node === box && resizeHandles !== null) resizeHandles.style.display = 'none'
       return
     }
     const rect = element.getBoundingClientRect()
     const view = doc.defaultView
     node.style.display = 'block'
     if (node === box && handle !== null) handle.style.top = rect.top < 34 ? rect.height + 6 + 'px' : '-32px'
+    if (node === box && resizeHandles !== null) {
+      resizeHandles.style.display = mode === 'inspect' && resizable(element) ? 'block' : 'none'
+    }
     node.style.left = (rect.left + (view?.scrollX ?? 0)) + 'px'
     node.style.top = (rect.top + (view?.scrollY ?? 0)) + 'px'
     node.style.width = rect.width + 'px'
@@ -477,7 +590,7 @@ function runtime(channel: string): void {
   }
 
   doc.addEventListener('mousemove', (event) => {
-    if (mode !== 'inspect' || drag !== null) return
+    if (mode !== 'inspect' || drag !== null || resize !== null) return
     if (!interactive(event)) return
     const rawTarget = event.target
     if (!(rawTarget instanceof Element)) return
@@ -534,7 +647,7 @@ function runtime(channel: string): void {
     const dy = Math.round(event.clientY - active.y)
     if (dx === 0 && dy === 0) {
       if (active.declarations !== null) {
-        restoreDragStyles(active)
+        restoreInlineStyles(active.element, active.restore, active.priorities)
         active.declarations = null
         place(box as HTMLDivElement, active.element)
       }
@@ -544,13 +657,63 @@ function runtime(channel: string): void {
     const y = offset(active.baseY, dy)
     const declarations = active.strategy === 'inline'
       ? { position: 'relative', left: x, top: y }
-      : { translate: x + ' ' + y + (active.baseZ === null ? '' : ' ' + active.baseZ) }
+      : { translate: translateValue(x, y, active.baseZ) }
     for (const [property, value] of Object.entries(declarations)) active.element.style.setProperty(property, value)
     active.declarations = declarations
     place(box as HTMLDivElement, active.element)
   }, true)
 
+  doc.addEventListener('pointermove', (event) => {
+    const active = resize
+    if (active === null || active.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (!active.element.isConnected) {
+      stopResize(false)
+      return
+    }
+    const dx = Math.round(event.clientX - active.x)
+    const dy = Math.round(event.clientY - active.y)
+    // Recompute from the gesture baseline every frame so a stale axis never
+    // survives the pointer crossing back over its origin.
+    restoreInlineStyles(active.element, active.restore, active.priorities)
+    const declarations: Record<string, string> = {}
+    const deltaW = (active.east ? dx : 0) + (active.west ? -dx : 0)
+    const deltaH = (active.south ? dy : 0) + (active.north ? -dy : 0)
+    if (deltaW !== 0) {
+      const visual = Math.max(0, active.startW + deltaW)
+      const value = active.contentBox ? visual - active.insetX : visual
+      declarations.width = Math.max(0, Math.round(value)) + 'px'
+    }
+    if (deltaH !== 0) {
+      const visual = Math.max(0, active.startH + deltaH)
+      const value = active.contentBox ? visual - active.insetY : visual
+      declarations.height = Math.max(0, Math.round(value)) + 'px'
+    }
+    const offsetX = active.west ? dx : 0
+    const offsetY = active.north ? dy : 0
+    if (offsetX !== 0 || offsetY !== 0) {
+      const x = offset(active.baseX, offsetX)
+      const y = offset(active.baseY, offsetY)
+      declarations.translate = translateValue(x, y, active.baseZ)
+    }
+    const changed = Object.keys(declarations).length > 0
+    if (changed) {
+      for (const [property, value] of Object.entries(declarations)) active.element.style.setProperty(property, value)
+      active.declarations = declarations
+    } else {
+      active.declarations = null
+    }
+    place(box as HTMLDivElement, active.element)
+  }, true)
+
   doc.addEventListener('pointerup', event => {
+    if (resize !== null && resize.pointerId === event.pointerId) {
+      event.preventDefault()
+      event.stopPropagation()
+      stopResize(true)
+      return
+    }
     if (drag === null || drag.pointerId !== event.pointerId) return
     event.preventDefault()
     event.stopPropagation()
@@ -558,6 +721,12 @@ function runtime(channel: string): void {
   }, true)
 
   doc.addEventListener('pointercancel', event => {
+    if (resize !== null && resize.pointerId === event.pointerId) {
+      event.preventDefault()
+      event.stopPropagation()
+      stopResize(false)
+      return
+    }
     if (drag === null || drag.pointerId !== event.pointerId) return
     event.preventDefault()
     event.stopPropagation()
@@ -583,7 +752,20 @@ function runtime(channel: string): void {
             handle.title = label
           }
         }
+        const resizeLabel = (data as { resizeHandleLabel?: unknown }).resizeHandleLabel
+        if (typeof resizeLabel === 'string' && resizeHandles !== null) {
+          for (const button of resizeHandles.querySelectorAll('button')) {
+            if (resizeLabel.trim() === '') {
+              button.removeAttribute('aria-label')
+              button.removeAttribute('title')
+            } else {
+              button.setAttribute('aria-label', resizeLabel)
+              button.title = resizeLabel
+            }
+          }
+        }
         if (mode === 'browse') {
+          stopResize(false)
           stopDrag(false)
           selected = null
           selectedSelector = null
@@ -635,6 +817,7 @@ function runtime(channel: string): void {
         selected = null
         selectedSelector = null
         hovered = null
+        stopResize(false)
         stopDrag(false)
         place(box as HTMLDivElement, null)
         place(overlay as HTMLDivElement, null)

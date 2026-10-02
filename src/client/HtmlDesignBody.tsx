@@ -71,8 +71,10 @@ const MODES: readonly DesignMode[] = ['browse', 'inspect']
 /** Editable style properties, with the locale key naming each one. */
 const STYLE_FIELDS: readonly {
   readonly key: string
-  readonly label: 'fontSize' | 'fontWeight' | 'lineHeight' | 'letterSpacing' | 'color' | 'background' | 'padding' | 'margin' | 'borderRadius'
+  readonly label: 'width' | 'height' | 'fontSize' | 'fontWeight' | 'lineHeight' | 'letterSpacing' | 'color' | 'background' | 'padding' | 'margin' | 'borderRadius'
 }[] = [
+  { key: 'width', label: 'width' },
+  { key: 'height', label: 'height' },
   { key: 'font-size', label: 'fontSize' },
   { key: 'font-weight', label: 'fontWeight' },
   { key: 'line-height', label: 'lineHeight' },
@@ -279,7 +281,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
 
   // Push the active mode into the frame so its listeners match the switch.
   useEffect(() => {
-    postToFrame(frameRef.current, { kind: 'mode', mode: state.mode, dragHandleLabel: t('dragHandle') })
+    postToFrame(frameRef.current, { kind: 'mode', mode: state.mode, dragHandleLabel: t('dragHandle'), resizeHandleLabel: t('resizeHandle') })
   }, [state.mode, source, state.reloadToken, t])
 
   useEffect(() => {
@@ -353,7 +355,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
       if (message.channel !== CHANNEL) return
       switch (message.kind) {
         case 'ready':
-          postToFrame(frameRef.current, { kind: 'mode', mode: state.mode, dragHandleLabel: t('dragHandle') })
+          postToFrame(frameRef.current, { kind: 'mode', mode: state.mode, dragHandleLabel: t('dragHandle'), resizeHandleLabel: t('resizeHandle') })
           for (const edit of state.document?.edits ?? []) {
             postToFrame(frameRef.current, { kind: 'style', selector: edit.selector, declarations: edit.declarations })
           }
@@ -386,11 +388,16 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
           return
         case 'move':
           if (message.anchor === undefined || message.declarations === undefined || message.restore === undefined || message.selector === undefined) return
-          if (state.selectedSelector !== message.selector || !state.open) return
+          if (state.selectedSelector !== message.selector) return
+          // A drag or resize can start from a plain selection whose dialog was
+          // never opened; open it here so the pending declarations become a
+          // reviewable draft instead of silently vanishing on the next action.
+          if (!state.open) selectAnchor(message.anchor, true)
           if (pendingMove.current === null) {
             pendingMove.current = { selector: message.selector, restore: message.restore }
           }
           actions.select(toAnchor(message.anchor))
+          setComputed(message.anchor.computed)
           setDraftStyle(current => ({ ...current, ...message.declarations }))
           setFileWrite({ kind: 'idle', detail: '' })
           return
@@ -602,7 +609,7 @@ export function HtmlDesignBody(props: HtmlDesignBodyProps): ReactNode {
             <button key={mode} type="button" className={css.modeOption} aria-pressed={state.mode === mode} title={mode === 'inspect' ? t('editGestureHint') : undefined} disabled={deleting} onClick={() => {
               if (state.mode === mode) return
               cancelEditor()
-              postToFrame(frameRef.current, { kind: 'mode', mode, dragHandleLabel: t('dragHandle') })
+              postToFrame(frameRef.current, { kind: 'mode', mode, dragHandleLabel: t('dragHandle'), resizeHandleLabel: t('resizeHandle') })
               actions.setMode(mode)
             }}>
               {modeLabel(mode, t)}
