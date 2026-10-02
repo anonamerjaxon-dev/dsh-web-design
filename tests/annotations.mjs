@@ -19,7 +19,10 @@ const check = (label, condition) => {
   else failures.push(label)
 }
 
-const work = await mkdtemp(join(tmpdir(), 'dsh-web-design-ann-'))
+// Realpath first: on macOS `tmpdir()` is `/var/folders/…`, a symlink into
+// `/private/var`, while the mocked fs.resolve below realpaths too — comparing
+// the raw join against the resolved path would then always mismatch.
+const work = await realpath(await mkdtemp(join(tmpdir(), 'dsh-web-design-ann-')))
 try {
   const file = join(work, 'index.html')
   await writeFile(file, '<!doctype html><html><body><h1>hi</h1></body></html>\n', 'utf8')
