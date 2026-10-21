@@ -8,3 +8,25 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 This product is a plugin for DeepSeek Harness
 (https://github.com/deepseek-ai/deepseek-harness). It links against DeepSeek
 Harness packages as peer dependencies; no DeepSeek Harness source is included.
+
+--------------------------------------------------------------------------
+Modifications in this fork
+--------------------------------------------------------------------------
+
+This repository is a fork of zhang-guo-wen/dsh-web-design
+(https://github.com/zhang-guo-wen/dsh-web-design), based on upstream commit
+356127b ("chore: release 1.0.1").
+
+The following changes were made in this fork (see the commit history for the
+full list):
+
+  * Drag-to-resize from eight outline handles on the selected element.
+  * Undo support, and applying element edits (text, style, drag) in one
+    committed step rather than one write per interaction.
+  * Usable controls for the style editor.
+  * A calmer, roomier layout for the element editor.
+  * A test fix: resolve the temp workspace with a real path, so a symlinked
+    macOS temp directory matches Node's fs.realpath behaviour.
+
+The upstream copyright notice above is retained unchanged, as required by
+section 4(d) of the Apache License, Version 2.0.

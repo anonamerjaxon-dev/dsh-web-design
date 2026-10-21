@@ -97,6 +97,8 @@ The plugin itself is Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 Its runtime dependencies keep their own licenses: `parse5` is MIT, and `@deepseek-ai/dsh-atomic-write` is MIT.
 
+This repository is a fork of [zhang-guo-wen/dsh-web-design](https://github.com/zhang-guo-wen/dsh-web-design). The upstream copyright notice is retained in [NOTICE](NOTICE), which also lists the changes made here (drag-to-resize handles, undo, committed edits, the style controls and the element-editor layout).
+
 ## Further reading
 
 - [AGENTS.md](AGENTS.md) — install variants, build, composition and deployment semantics, release, technical decisions, tests, and troubleshooting.
